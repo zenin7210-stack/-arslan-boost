@@ -1,0 +1,41 @@
+name: Update ARSLAN BOOST
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - update.zip
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.publish.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/configure-pages@v5
+      - name: Unpack Mini App
+        run: |
+          unzip -q update.zip -d unpacked
+          mkdir -p _site
+          cp unpacked/*.html unpacked/*.css unpacked/*.js _site/
+          cp -R unpacked/assets _site/assets
+          test -f _site/index.html
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Publish Mini App
+        id: publish
+        uses: actions/deploy-pages@v4
