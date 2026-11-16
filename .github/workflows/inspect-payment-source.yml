@@ -1,0 +1,37 @@
+name: Inspect ARSLAN BOOST payment source
+on:
+  push:
+    branches: [arslan-payment-screen]
+    paths: [.github/workflows/inspect-payment-source.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Read frontend source
+        shell: python
+        run: |
+          import json
+          import pathlib
+          import zipfile
+          for name in ('update.zip', 'arslan-boost-worker.zip'):
+              with zipfile.ZipFile(name) as archive:
+                  for entry in archive.infolist():
+                      path = pathlib.PurePosixPath(entry.filename)
+                      if entry.is_dir() or 'node_modules' in path.parts:
+                          continue
+                      if path.suffix not in {'.html', '.css', '.js', '.mjs', '.toml', '.jsonc'}:
+                          continue
+                      print('ARSLAN_PATH ' + json.dumps([name, str(path), entry.file_size]))
+                      is_page_source = name == 'update.zip' or {'public', 'web', 'miniapp'}.intersection(path.parts)
+                      if not is_page_source or path.suffix not in {'.html', '.css', '.js', '.mjs'}:
+                          continue
+                      if entry.file_size > 275000 or len(path.parts) > 5:
+                          continue
+                      source = archive.read(entry).decode('utf-8-sig', errors='strict')
+                      for index in range(0, len(source), 3000):
+                          print('ARSLAN_SOURCE ' + json.dumps([name, str(path), index, source[index:index+3000]]))
