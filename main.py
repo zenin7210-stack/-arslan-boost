@@ -25,6 +25,8 @@ CREDIT = re.compile(r"^[+➕]\s*\d[\d\s.,\u00a0\u202f]*\s*UZS\s*$", re.I | re.M)
 NEGATIVE = re.compile(r"^(?:[-−➖]\s*\d|💸\s*to['‘’]lov\s*$|(?:🔴\s*)?списание(?: с карты)?\s*$)", re.I | re.M)
 OTP = re.compile(r"\botp\b|код подтверждения|verification code|tasdiqlash kodi|one.time password", re.I)
 CARD_LINE = re.compile(r"(?:💳|card\s*:|карта\s*:)\s*(?:(?:HUMOCARD|HUMO)\s*)?[*•xX ]*\d{4}\b", re.I)
+CARDXABAR_MASK_LINE = re.compile(r"^\s*[*•xX]{2,}\s*\d{4}\s*$", re.M)
+
 SECRET_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,256}\Z")
 RECHECK = timedelta(minutes=30)
 SCAN_SECONDS = 8
@@ -47,7 +49,7 @@ def notice_type(text, source):
             return False
     else:
         return False
-    return len(CREDIT.findall(normalized)) == 1 and bool(CARD_LINE.search(normalized))
+    return len(CREDIT.findall(normalized)) == 1 and bool(CARD_LINE.search(normalized) or (source == "cardxabar" and CARDXABAR_MASK_LINE.search(normalized)))
 
 
 
