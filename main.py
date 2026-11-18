@@ -160,10 +160,14 @@ async def process_messages(client, peers, config, dry_run, worker_url, already_s
 
 
 async def listen():
+    LOG.info("Listener setup stage=credentials")
     api_id, api_hash, session = get_credentials()
+    LOG.info("Listener setup stage=configuration")
     dry_run, worker_url, config = get_relay_config()
+    LOG.info("Listener setup stage=telegram_connect")
     client = TelegramClient(StringSession(session), api_id, api_hash)
     await client.connect()
+    LOG.info("Listener setup stage=telegram_connected")
     try:
         if not await client.is_user_authorized():
             raise RuntimeError("User Telegram session is not authorized")
@@ -172,6 +176,7 @@ async def listen():
             raise RuntimeError("The listener needs a user session, not a bot token")
         peers = {}
         for source, name in BOT_NAMES.items():
+            LOG.info("Listener setup stage=resolve_bot source=%s", source)
             bot = await client.get_entity(name)
             if not bot.bot or not bot.username or bot.username.casefold() != name.casefold():
                 raise RuntimeError("Unexpected Telegram bank bot identity for " + source)
@@ -201,7 +206,19 @@ async def main():
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:
-            LOG.error("Listener stopped type=%s; retrying", type(exc).__name__)
+            # Whitelist diagnostic reasons; never print credentials or Telegram data.
+            safe_codes = {
+                "Missing or invalid Telegram API ID": "missing_api_id",
+                "Missing Telegram credentials or private user session": "missing_credentials",
+                "User Telegram session is not authorized": "session_not_authorized",
+                "The listener needs a user session, not a bot token": "wrong_session_type",
+                "Unexpected Telegram bank bot identity for cardxabar": "cardxabar_identity",
+                "Unexpected Telegram bank bot identity for humo": "humo_identity",
+                "Pinned Telegram bot ID mismatch for cardxabar": "cardxabar_peer_mismatch",
+                "Pinned Telegram bot ID mismatch for humo": "humo_peer_mismatch",
+            }
+            code = safe_codes.get(str(exc), type(exc).__name__)
+            LOG.error("Listener stopped reason=%s; retrying", code)
         await asyncio.sleep(backoff)
         backoff = min(60, backoff * 2)
 
