@@ -1,27 +1,54 @@
 import os
 import re
 import logging
+import threading
+import http.server
+import socketserver
+import asyncio
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 import requests
 
-# Настройка логирования для Render
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
+# Запуск микро-сервера для Render Web Service (для прохождения проверки порта)
+PORT = int(os.getenv("PORT", 10000))
+
+class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+    def log_message(self, format, *args):
+        pass
+
+def run_web_server():
+    try:
+        with socketserver.TCPServer(("", PORT), HealthCheckHandler) as httpd:
+            logger.info(f"🌐 HTTP-сервер для Render запущен на порту {PORT}")
+            httpd.serve_forever()
+    except Exception as e:
+        logger.error(f"Ошибка HTTP-сервера: {e}")
+
+# Запускаем веб-сервер в отдельном потоке
+threading.Thread(target=run_web_server, daemon=True).start()
+
 # Получение переменных окружения
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
+SESSION_STRING = os.getenv("SESSION_STRING", "")
 WORKER_WEBHOOK_URL = os.getenv(
     "WORKER_WEBHOOK_URL", 
     "https://arslan-boost.zenin7210.workers.dev/api/webhook/payment"
 )
 
-# Проверка обязательных параметров
-if not API_ID or not API_HASH:
-    logger.error("❌ ОШИБКА: Не заданы API_ID или API_HASH в переменных окружения Render!")
+if not API_ID or not API_HASH or not SESSION_STRING:
+    logger.error("❌ ОШИБКА: Не заданы API_ID, API_HASH или SESSION_STRING!")
     exit(1)
 
 try:
@@ -30,38 +57,31 @@ except ValueError:
     logger.error("❌ ОШИБКА: API_ID должен быть числом!")
     exit(1)
 
-client = TelegramClient("session_name", API_ID, API_HASH)
+# Инициализация клиента через StringSession
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 @client.on(events.NewMessage(incoming=True))
 async def handle_bank_notification(event):
     text = event.message.text or ""
     
-    # Фильтруем ключевые слова банковских уведомлений
     keywords = ["поступление", "зачислено", "uzcard", "humo"]
     if not any(kw in text.lower() for kw in keywords):
         return
 
     logger.info(f"📥 Новое уведомление: {text}")
-    
-    # Поиск суммы в тексте (поддерживает пробелы и неразрывные пробелы)
     amounts = re.findall(r'([\d\s\.]+)\s*(?:сум|so\'m|UZS)', text, re.IGNORECASE)
     
     if not amounts:
-        logger.warning("⚠️ Не удалось выделить сумму из текста уведомления.")
         return
 
-    # Очищаем сумму от лишних символов
     raw_amount = amounts[0].replace(" ", "").replace("\xa0", "")
-    
     try:
         incoming_amount = float(raw_amount)
     except ValueError:
-        logger.error(f"❌ Не удалось конвертировать сумму в число: {raw_amount}")
         return
 
     logger.info(f"🧮 Распознанная сумма: {incoming_amount}")
 
-    # Отправка данных в Cloudflare Worker с таймаутом
     try:
         response = requests.post(
             WORKER_WEBHOOK_URL, 
@@ -71,19 +91,18 @@ async def handle_bank_notification(event):
             },
             timeout=10
         )
-        
         if response.status_code == 200:
-            logger.info("🚀 Уведомление успешно передано в Worker, баланс обновлен!")
+            logger.info("🚀 Успешно передано в Worker!")
         else:
             logger.warning(f"⚠️ Worker отклонил сумму {incoming_amount}: {response.text}")
-            
     except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Ошибка соединения с Cloudflare Worker: {e}")
+        logger.error(f"❌ Ошибка соединения с Worker: {e}")
 
-def main():
-    logger.info("🤖 Telethon-юзербот запущен и ожидает уведомления от банков...")
-    client.start()
-    client.run_until_disconnected()
+async def main():
+    logger.info("🤖 Telethon-юзербот запускается через StringSession...")
+    await client.start()
+    logger.info("✅ Юзербот успешно авторизован и ожидает уведомления от банков...")
+    await client.run_until_disconnected()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
