@@ -37,3 +37,17 @@ jobs:
             exit 1
           fi
           echo 'PASS: every original public/ file is byte-for-byte preserved'
+      - name: Verify exact server source baseline for patch compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/arslan-original-check
+          test -d src || { echo 'Missing backend source'; exit 1; }
+          source_sha="$(find src -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f1)"
+          expected_source_sha="0a6d7c181cb04c839a0a9593d86472582529f3bd6f2e38b3b1e5f315f11e6ab9"
+          echo "Backend source checksum: $source_sha"
+          if [[ "$source_sha" != "$expected_source_sha" ]]; then
+            echo "Backend differs from user-provided version; refuse to patch blindly"
+            exit 1
+          fi
+          echo "PASS: backend source matches user-provided baseline"
