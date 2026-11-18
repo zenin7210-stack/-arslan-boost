@@ -124,6 +124,39 @@ def send_event(worker_url, secret, source, peer_id, message):
     return False
 
 
+def verify_relay_auth_without_payment(worker_url, config):
+    """Diagnostic only: no credit line, no bank event, never writes to D1."""
+    if not worker_url.startswith("https://"):
+        LOG.warning("Relay auth check skipped: WORKER_URL not configured")
+        return
+    for source in BOT_NAMES:
+        secret = config[source]["secret"]
+        if not SECRET_PATTERN.fullmatch(secret):
+            LOG.warning("Relay auth check skipped source=%s: secret not configured", source)
+            continue
+        try:
+            response = requests.post(
+                worker_url + "/relay/" + source,
+                json={"eventId": "diagnostic-only"},
+                headers={"Authorization": "Bearer " + secret},
+                allow_redirects=False, timeout=12)
+            try:
+                reason = response.json().get("error")
+            except (ValueError, AttributeError):
+                reason = None
+            # The Worker authenticates before parsing the deliberately missing text.
+            # Only its expected post-auth parser error establishes that the key matched.
+            if response.status_code == 400 and reason == "p2p_notice_unsupported":
+                LOG.info("Relay auth check passed source=%s (no payment submitted)", source)
+            else:
+                LOG.warning("Relay auth check failed source=%s HTTP=%s reason=%s",
+                            source, response.status_code,
+                            reason if reason in {"forbidden", "endpoint_missing", "p2p_notice_unsupported"} else "other")
+        except requests.RequestException as exc:
+            LOG.warning("Relay auth check failed source=%s network=%s",
+                        source, type(exc).__name__)
+
+
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path != "/":
@@ -182,6 +215,8 @@ async def listen():
     api_id, api_hash, session = get_credentials()
     LOG.info("Listener setup stage=configuration")
     dry_run, worker_url, config = get_relay_config()
+    if dry_run:
+        await asyncio.to_thread(verify_relay_auth_without_payment, worker_url, config)
     LOG.info("Listener setup stage=telegram_connect")
     client = TelegramClient(StringSession(session), api_id, api_hash)
     await client.connect()
