@@ -23,6 +23,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Use Node.js 22 for SQLite-based tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Prepare approved v2 release archive
         shell: bash
         run: |
@@ -45,6 +50,32 @@ jobs:
           set -euo pipefail
           find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
           npm test
+
+      - name: Confirm live D1 contains required tables and settlement trigger (read only)
+        working-directory: deploy_src/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::Cloudflare API token is missing"; exit 1; }
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name, type FROM sqlite_master WHERE name IN ('accounts','payments','orders','donat_orders','invoices','p2p_incoming','p2p_manual_queue','p2p_manual_reviews','p2p_paid_requires_bank_event','p2p_settle_on_paid')" > /tmp/arslan_d1_schema.json
+          node - <<'JS'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('/tmp/arslan_d1_schema.json','utf8'));
+          const rows = (Array.isArray(report) ? report : [report]).flatMap(x => x.results || []);
+          const names = new Set(rows.map(x => x.name));
+          const required = ['accounts','payments','orders','donat_orders','invoices',
+              'p2p_incoming','p2p_manual_queue','p2p_manual_reviews',
+              'p2p_paid_requires_bank_event','p2p_settle_on_paid'];
+          const absent = required.filter(x => !names.has(x));
+          if (absent.length) {
+            console.error('::error::D1 is missing required schema objects: ' + absent.join(', '));
+            process.exit(1);
+          }
+          console.log('Remote D1 schema verified read-only; no SQL changes applied');
+          JS
 
       - name: Deploy existing production Cloudflare Worker (no DB migrations)
         working-directory: deploy_src/arslan-boost-cloudflare
