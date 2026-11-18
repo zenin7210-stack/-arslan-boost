@@ -35,7 +35,6 @@ jobs:
           test -f deploy_src/arslan-boost-cloudflare/wrangler.production.jsonc
           test -f deploy_src/arslan-boost-cloudflare/public/index.html
           test -f deploy_src/arslan-boost-cloudflare/src/worker.mjs
-          node -e 'const c=require("./deploy_src/arslan-boost-cloudflare/wrangler.production.jsonc");' 2>/dev/null || true
           node -e 'const fs=require("fs");const c=JSON.parse(fs.readFileSync("deploy_src/arslan-boost-cloudflare/wrangler.production.jsonc","utf8"));if(c.name!=="arslan-boost-bot"||c.d1_databases?.[0]?.database_name!=="arslan-boost-payments"||c.vars?.P2P_MODE!=="manual")process.exit(1)'
           echo "Approved production Worker and current D1 binding verified"
 
