@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: "Enter DEPLOY after backing up your D1 database"
+        description: "Enter MIGRATE_AND_DEPLOY to authorise D1 migration and Worker update"
         required: true
         type: string
 
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ inputs.confirmation == 'DEPLOY' }}
+    if: ${{ inputs.confirmation == 'MIGRATE_AND_DEPLOY' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -51,30 +51,92 @@ jobs:
           find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
           npm test
 
-      - name: Confirm live D1 contains required tables and settlement trigger (read only)
+      - name: Check live D1 schema (read-only)
+        id: schema
         working-directory: deploy_src/arslan-boost-cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::Cloudflare API token is missing"; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::Cloudflare token missing"; exit 1; }
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT name, type FROM sqlite_master WHERE name IN ('accounts','payments','orders','donat_orders','invoices','p2p_incoming','p2p_manual_queue','p2p_manual_reviews','p2p_paid_requires_bank_event','p2p_settle_on_paid')" > /tmp/arslan_d1_schema.json
+            --command "SELECT name, type FROM sqlite_master WHERE name IN ('accounts','payments','orders','donat_orders','invoices','p2p_incoming','p2p_notices','p2p_manual_queue','p2p_manual_reviews','p2p_paid_requires_bank_event','p2p_settle_on_paid','debit_wallet_on_insert','d1_migrations')" > /tmp/arslan_before.json
           node - <<'JS'
-          const fs = require('fs');
-          const report = JSON.parse(fs.readFileSync('/tmp/arslan_d1_schema.json','utf8'));
-          const rows = (Array.isArray(report) ? report : [report]).flatMap(x => x.results || []);
-          const names = new Set(rows.map(x => x.name));
-          const required = ['accounts','payments','orders','donat_orders','invoices',
-              'p2p_incoming','p2p_manual_queue','p2p_manual_reviews',
-              'p2p_paid_requires_bank_event','p2p_settle_on_paid'];
-          const absent = required.filter(x => !names.has(x));
-          if (absent.length) {
-            console.error('::error::D1 is missing required schema objects: ' + absent.join(', '));
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('/tmp/arslan_before.json','utf8'));
+          const names=new Set((Array.isArray(r)?r:[r]).flatMap(x=>x.results||[]).map(x=>x.name));
+          const old=['accounts','payments','orders','donat_orders','invoices','p2p_incoming','p2p_notices','p2p_paid_requires_bank_event','p2p_settle_on_paid','debit_wallet_on_insert','d1_migrations'];
+          const missingOld=old.filter(x=>!names.has(x));
+          if(missingOld.length){console.error('::error::Unexpected D1 baseline missing '+missingOld.join(','));process.exit(1)}
+          const missingNew=['p2p_manual_queue','p2p_manual_reviews'].filter(x=>!names.has(x));
+          if(missingNew.length===1){console.error('::error::Partial migration detected; aborting');process.exit(1)}
+          const needed=missingNew.length===2;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,'needs_migration='+needed+'\n');
+          console.log(needed?'Only migration 0010 is required':'Schema is already compatible');
+          JS
+
+      - name: Confirm remote D1 has exactly migrations 0001 through 0009
+        if: steps.schema.outputs.needs_migration == 'true'
+        working-directory: deploy_src/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id" > /tmp/arslan_ledger.json
+          node - <<'JS'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('/tmp/arslan_ledger.json','utf8'));
+          const rows=(Array.isArray(r)?r:[r]).flatMap(x=>x.results||[]);
+          const got=rows.map(x=>x.name);
+          const expected=['0001_checkout.sql','0002_p2p.sql','0003_partners.sql','0004_telegram_entry.sql','0005_checkout_webhook.sql','0006_exact_transfer_amount.sql','0007_miniapp_receipt_upload.sql','0008_transfer_orders.sql','0009_bank_confirmation.sql'];
+          if(JSON.stringify(got)!==JSON.stringify(expected)){
+            console.error('::error::Unexpected migration history. Stop for manual review.');
             process.exit(1);
           }
-          console.log('Remote D1 schema verified read-only; no SQL changes applied');
+          console.log('Migration ledger verified. Ready for 0010 only.');
+          JS
+
+      - name: Create D1 recovery point (Time Travel bookmark)
+        if: steps.schema.outputs.needs_migration == 'true'
+        working-directory: deploy_src/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments --config wrangler.production.jsonc
+          echo "::notice::Save this run log containing the D1 recovery bookmark."
+
+      - name: Apply migration 0010 (only after schema and backup checks)
+        if: steps.schema.outputs.needs_migration == 'true'
+        working-directory: deploy_src/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 migrations apply arslan-boost-payments --remote --config wrangler.production.jsonc
+
+      - name: Verify migrated D1 before deploying Worker
+        working-directory: deploy_src/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('accounts','payments','orders','donat_orders','invoices','p2p_incoming','p2p_manual_queue','p2p_manual_reviews','p2p_paid_requires_bank_event','p2p_settle_on_paid')" > /tmp/arslan_after.json
+          node - <<'JS'
+          const fs=require('fs');
+          const r=JSON.parse(fs.readFileSync('/tmp/arslan_after.json','utf8'));
+          const names=new Set((Array.isArray(r)?r:[r]).flatMap(x=>x.results||[]).map(x=>x.name));
+          const expected=['accounts','payments','orders','donat_orders','invoices','p2p_incoming','p2p_manual_queue','p2p_manual_reviews','p2p_paid_requires_bank_event','p2p_settle_on_paid'];
+          const missing=expected.filter(x=>!names.has(x));
+          if(missing.length){console.error('::error::D1 schema mismatch: '+missing.join(','));process.exit(1)}
+          console.log('D1 schema validated after migration');
           JS
 
       - name: Deploy existing production Cloudflare Worker (no DB migrations)
