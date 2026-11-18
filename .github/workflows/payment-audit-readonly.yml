@@ -1,8 +1,8 @@
-name: One-time read-only audit of 10003 UZS test
+name: One-time read-only audit of 25000 UZS test
 on:
   push:
     branches:
-      - diagnostics/readonly-payment-10003
+      - diagnostics/readonly-payment-25000
     paths:
       - .github/workflows/payment-audit-readonly.yml
 
@@ -28,10 +28,10 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "SELECT status,COUNT(*) AS n FROM invoices WHERE unique_amount=10003 AND created_at>=unixepoch('now')-10800 GROUP BY status" > /tmp/invoices.json
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "SELECT COUNT(*) AS events, COALESCE(SUM(CASE WHEN invoice_id IS NOT NULL THEN 1 ELSE 0 END),0) AS matched FROM p2p_incoming WHERE amount=10003 AND occurred_at>=unixepoch('now')-10800" > /tmp/incoming.json
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "SELECT COUNT(*) AS waiting FROM p2p_manual_queue m JOIN invoices i ON i.id=m.invoice_id WHERE i.unique_amount=10003 AND i.created_at>=unixepoch('now')-10800" > /tmp/queue.json
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "SELECT COUNT(*) AS cancelled FROM p2p_invoice_cancellations c JOIN invoices i ON i.id=c.invoice_id WHERE i.unique_amount=10003 AND i.created_at>=unixepoch('now')-10800" > /tmp/cancelled.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "SELECT status,COUNT(*) AS n FROM invoices WHERE unique_amount=25000 AND created_at>=unixepoch('now')-10800 GROUP BY status" > /tmp/invoices.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "SELECT COUNT(*) AS events, COALESCE(SUM(CASE WHEN invoice_id IS NOT NULL THEN 1 ELSE 0 END),0) AS matched FROM p2p_incoming WHERE amount=25000 AND occurred_at>=unixepoch('now')-10800" > /tmp/incoming.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "SELECT COUNT(*) AS waiting FROM p2p_manual_queue m JOIN invoices i ON i.id=m.invoice_id WHERE i.unique_amount=25000 AND i.created_at>=unixepoch('now')-10800" > /tmp/queue.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "SELECT COUNT(*) AS cancelled FROM p2p_invoice_cancellations c JOIN invoices i ON i.id=c.invoice_id WHERE i.unique_amount=25000 AND i.created_at>=unixepoch('now')-10800" > /tmp/cancelled.json
           node - <<'JS'
           const fs=require('fs');
           function data(p) {const v=JSON.parse(fs.readFileSync(p,'utf8'));return (Array.isArray(v)?v:[v]).flatMap(x=>x.results||[]);}
