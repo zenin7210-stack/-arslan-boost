@@ -1,0 +1,59 @@
+name: Update ARSLAN BOOST v2 (manual iPhone deployment)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Enter DEPLOY after backing up your D1 database"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ inputs.confirmation == 'DEPLOY' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare approved v2 release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="ARSLAN_BOOST_APPROVED_UPDATE_READY_v2_2026-11-18.zip"
+          test -f "$ZIP" || { echo "::error::Upload $ZIP to the repository root first (GitHub > Add file > Upload files)."; exit 1; }
+          unzip -t "$ZIP" >/dev/null
+          mkdir -p deploy_src
+          unzip -q "$ZIP" -d deploy_src
+          test -f deploy_src/arslan-boost-cloudflare/wrangler.production.jsonc
+          test -f deploy_src/arslan-boost-cloudflare/public/index.html
+          test -f deploy_src/arslan-boost-cloudflare/src/worker.mjs
+          node -e 'const c=require("./deploy_src/arslan-boost-cloudflare/wrangler.production.jsonc");' 2>/dev/null || true
+          node -e 'const fs=require("fs");const c=JSON.parse(fs.readFileSync("deploy_src/arslan-boost-cloudflare/wrangler.production.jsonc","utf8"));if(c.name!=="arslan-boost-bot"||c.d1_databases?.[0]?.database_name!=="arslan-boost-payments"||c.vars?.P2P_MODE!=="manual")process.exit(1)'
+          echo "Approved production Worker and current D1 binding verified"
+
+      - name: Verify JavaScript syntax and unit tests
+        working-directory: deploy_src/arslan-boost-cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          npm test
+
+      - name: Deploy existing production Cloudflare Worker (no DB migrations)
+        working-directory: deploy_src/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "::error::Set GitHub Actions secret CLOUDFLARE_API_TOKEN"; exit 1; }
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo "Deployment complete. D1 migrations were NOT executed."
