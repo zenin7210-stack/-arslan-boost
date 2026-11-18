@@ -177,15 +177,26 @@ async def listen():
         peers = {}
         for source, name in BOT_NAMES.items():
             LOG.info("Listener setup stage=resolve_bot source=%s", source)
-            bot = await client.get_entity(name)
-            if not bot.bot or not bot.username or bot.username.casefold() != name.casefold():
-                raise RuntimeError("Unexpected Telegram bank bot identity for " + source)
+            try:
+                bot = await client.get_entity(name)
+            except (ValueError, RuntimeError) as exc:
+                LOG.warning("Bank source disabled: %s reason=entity_lookup_%s",
+                            source, type(exc).__name__)
+                continue
+            correct_name = bool(getattr(bot, "username", None)) and bot.username.casefold() == name.casefold()
+            if not bool(getattr(bot, "bot", False)) or not correct_name:
+                LOG.warning("Bank source disabled: %s reason=identity_invalid is_bot=%s username_match=%s",
+                            source, bool(getattr(bot, "bot", False)), correct_name)
+                continue
             if not dry_run and bot.id != config[source]["peer_id"]:
-                raise RuntimeError("Pinned Telegram bot ID mismatch for " + source)
+                LOG.warning("Bank source disabled: %s reason=pinned_peer_mismatch", source)
+                continue
             peers[source] = bot
             LOG.info("Bank notification bot verified: %s id=%s", source, bot.id)
-        LOG.info("Telethon authorized; mode=%s",
-                 "READ_ONLY" if dry_run else "RELAY")
+        if not peers:
+            raise RuntimeError("No verified bank notification bots accessible")
+        LOG.info("Telethon authorized; verified_sources=%s mode=%s",
+                 ",".join(peers), "READ_ONLY" if dry_run else "RELAY")
         seen = {}
         while True:
             try:
@@ -216,6 +227,7 @@ async def main():
                 "Unexpected Telegram bank bot identity for humo": "humo_identity",
                 "Pinned Telegram bot ID mismatch for cardxabar": "cardxabar_peer_mismatch",
                 "Pinned Telegram bot ID mismatch for humo": "humo_peer_mismatch",
+                "No verified bank notification bots accessible": "no_verified_bank_sources",
             }
             code = safe_codes.get(str(exc), type(exc).__name__)
             LOG.error("Listener stopped reason=%s; retrying", code)
