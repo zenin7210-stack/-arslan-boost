@@ -43,6 +43,12 @@ jobs:
           node -e 'const fs=require("fs");const c=JSON.parse(fs.readFileSync("deploy_src/arslan-boost-cloudflare/wrangler.production.jsonc","utf8"));if(c.name!=="arslan-boost-bot"||c.d1_databases?.[0]?.database_name!=="arslan-boost-payments"||c.vars?.P2P_MODE!=="manual")process.exit(1)'
           echo "Approved production Worker and current D1 binding verified"
 
+      - name: Verify CardXabar format and preserve existing private P2P settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          node fixes/apply-p2p-verified-card-mask.mjs
+
       - name: Verify JavaScript syntax and unit tests
         working-directory: deploy_src/arslan-boost-cloudflare
         shell: bash
