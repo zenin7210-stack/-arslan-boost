@@ -49,6 +49,12 @@ jobs:
           set -euo pipefail
           node fixes/apply-p2p-verified-card-mask.mjs
 
+      - name: Fix iPhone card amount formatting without changing design
+        shell: bash
+        run: |
+          set -euo pipefail
+          node fixes/apply-wallet-amount-normalization.mjs
+
       - name: Verify JavaScript syntax and unit tests
         working-directory: deploy_src/arslan-boost-cloudflare
         shell: bash
