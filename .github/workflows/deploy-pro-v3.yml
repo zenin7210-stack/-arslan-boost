@@ -1,0 +1,151 @@
+name: ARSLAN BOOST PRO v3 — verify and deploy approved archive
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY_VERIFIED_V3 to authorize D1 migration and Worker update"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'push' || inputs.confirmation == 'DEPLOY_VERIFIED_V3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout approved source
+        uses: actions/checkout@v4
+
+      - name: Node.js 22 for SQLite integration tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify immutable release archive and extract
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          test -f "$ZIP" || { echo '::error::Approved v3 archive has not been uploaded.'; exit 1; }
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -t "$ZIP" >/dev/null
+          mkdir -p release
+          unzip -q "$ZIP" -d release
+          test -f release/arslan-boost-cloudflare/migrations/0011_safe_order_flow.sql
+          test -f release/arslan-boost-cloudflare/src/worker.mjs
+          test -f release/arslan-boost-cloudflare/public/index.html
+          node - <<'JS'
+          const fs=require('fs');
+          const c=JSON.parse(fs.readFileSync('release/arslan-boost-cloudflare/wrangler.production.jsonc'));
+          if(c.name!=='arslan-boost-bot' || c.d1_databases?.[0]?.database_name!=='arslan-boost-payments')
+            throw Error('Worker/D1 target mismatch');
+          if(Object.prototype.hasOwnProperty.call(c.vars||{},'P2P_MODE'))
+            throw Error('Production mode must not be overwritten: remove P2P_MODE from vars');
+          if(c.vars?.ENABLE_PAYMENTS!=='1' || c.vars?.BOT_USERNAME!=='arslanboostbot')
+            throw Error('Unexpected approved configuration');
+          JS
+
+      - name: Syntax check and full order/payment tests
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        run: |
+          set -euo pipefail
+          find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          npm test
+
+      - name: Check live D1 baseline and migration ledger (read only)
+        id: migration
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN is missing'; exit 1; }
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id' > /tmp/arslan_v3_migrations.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('orders','donat_orders','invoices','p2p_incoming','p2p_manual_queue','p2p_manual_reviews','order_claims','order_id_edits','p2p_review_alerts')" > /tmp/arslan_v3_schema.json
+          node - <<'JS'
+          const fs=require('fs');
+          function records(path){const j=JSON.parse(fs.readFileSync(path));return (Array.isArray(j)?j:[j]).flatMap(x=>x.results||[]);}
+          const ledger=records('/tmp/arslan_v3_migrations.json').map(x=>x.name);
+          const old=[
+            '0001_checkout.sql','0002_p2p.sql','0003_partners.sql','0004_telegram_entry.sql',
+            '0005_checkout_webhook.sql','0006_exact_transfer_amount.sql','0007_miniapp_receipt_upload.sql',
+            '0008_transfer_orders.sql','0009_bank_confirmation.sql','0010_manual_approval.sql'];
+          const expectedNew=[...old,'0011_safe_order_flow.sql'];
+          const need=JSON.stringify(ledger)===JSON.stringify(old);
+          const already=JSON.stringify(ledger)===JSON.stringify(expectedNew);
+          if(!need&&!already)throw Error('Unexpected D1 migration history; stopped without changes');
+          const names=new Set(records('/tmp/arslan_v3_schema.json').map(x=>x.name));
+          for(const name of ['orders','donat_orders','invoices','p2p_incoming','p2p_manual_queue','p2p_manual_reviews'])
+            if(!names.has(name))throw Error('D1 baseline missing: '+name);
+          for(const name of ['order_claims','order_id_edits','p2p_review_alerts'])
+            if(names.has(name)!==already)throw Error('Partial/unknown 0011 migration: '+name);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,'needs_migration='+need+'\n');
+          console.log(need?'Verified legacy schema, migration 0011 required':'Migration 0011 already installed');
+          JS
+
+      - name: Save D1 recovery bookmark before migration
+        if: steps.migration.outputs.needs_migration == 'true'
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments --config wrangler.production.jsonc
+          echo '::notice::Recovery bookmark recorded above, before schema change.'
+
+      - name: Apply migration 0011 to existing production D1 (no data reset)
+        if: steps.migration.outputs.needs_migration == 'true'
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 migrations apply arslan-boost-payments --remote --config wrangler.production.jsonc
+
+      - name: Verify D1 after migration before any Worker deployment
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('arslan_one_active_boost','arslan_one_active_donat','order_claims','order_admin_notices','p2p_review_alerts','p2p_invoice_cancellations','order_id_edits')" > /tmp/arslan_v3_verified.json
+          node - <<'JS'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/arslan_v3_verified.json'));
+          const n=new Set((Array.isArray(j)?j:[j]).flatMap(x=>x.results||[]).map(x=>x.name));
+          const required=['arslan_one_active_boost','arslan_one_active_donat','order_claims',
+            'order_admin_notices','p2p_review_alerts','p2p_invoice_cancellations','order_id_edits'];
+          const missing=required.filter(x=>!n.has(x));
+          if(missing.length)throw Error('Incomplete 0011 migration, refusing Worker deployment: '+missing.join(','));
+          console.log('All required schema objects present');
+          JS
+
+      - name: Deploy approved Worker, keep existing Cloudflare secrets and private settings
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo '::notice::Check /p2p_status privately; P2P cards must stay disabled until bank-event end-to-end tests.'
