@@ -1,0 +1,39 @@
+name: Verify ARSLAN BOOST original design
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/verify-original-design.yml"
+      - "arslan-boost-worker.zip"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-original:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify worker archive
+        run: unzip -t arslan-boost-worker.zip | tail -1
+      - name: Compare public assets to owner's original ZIP (SHA-256)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/arslan-original-check
+          unzip -q arslan-boost-worker.zip -d /tmp/arslan-original-check
+          cd /tmp/arslan-original-check
+          test -d public || { echo 'ERROR: no public/ in archive'; exit 1; }
+          count="$(find public -type f | wc -l | tr -d ' ')"
+          actual="$(find public -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f1)"
+          expected="5768a9fd255de426d2a1ddded9ccf3a48f0d7fc200ae5be2e110c784c9192fc6"
+          echo "Number of interface files: $count"
+          echo "Interface tree checksum: $actual"
+          echo "Expected checksum: $expected"
+          if [[ "$count" != "79" || "$actual" != "$expected" ]]; then
+            echo 'FAIL: GitHub archive is not the exact original interface'
+            echo 'Do NOT deploy this archive as a replacement for the original Mini App.'
+            exit 1
+          fi
+          echo 'PASS: every original public/ file is byte-for-byte preserved'
