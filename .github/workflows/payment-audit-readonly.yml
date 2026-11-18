@@ -2,7 +2,7 @@ name: One-time read-only audit of 25000 UZS test
 on:
   push:
     branches:
-      - diagnostics/readonly-payment-25000
+      - diagnostics/readonly-payment-10003
     paths:
       - .github/workflows/payment-audit-readonly.yml
 
