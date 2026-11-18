@@ -50,6 +50,22 @@ def notice_type(text, source):
     return len(CREDIT.findall(normalized)) == 1 and bool(CARD_LINE.search(normalized))
 
 
+
+def is_verified_bot_identity(bot, expected):
+    """Validate Telegram primary or active secondary bot username, never a stale alias."""
+    if not bool(getattr(bot, "bot", False)):
+        return False
+    names = set()
+    primary = getattr(bot, "username", None)
+    if isinstance(primary, str):
+        names.add(primary.casefold())
+    for alias in getattr(bot, "usernames", None) or []:
+        alias_name = getattr(alias, "username", None)
+        if getattr(alias, "active", False) and isinstance(alias_name, str):
+            names.add(alias_name.casefold())
+    return expected.casefold() in names
+
+
 def get_credentials():
     try:
         api_id = int(os.getenv("TG_API_ID") or os.getenv("API_ID") or "")
@@ -183,8 +199,8 @@ async def listen():
                 LOG.warning("Bank source disabled: %s reason=entity_lookup_%s",
                             source, type(exc).__name__)
                 continue
-            correct_name = bool(getattr(bot, "username", None)) and bot.username.casefold() == name.casefold()
-            if not bool(getattr(bot, "bot", False)) or not correct_name:
+            correct_name = is_verified_bot_identity(bot, name)
+            if not correct_name:
                 LOG.warning("Bank source disabled: %s reason=identity_invalid is_bot=%s username_match=%s",
                             source, bool(getattr(bot, "bot", False)), correct_name)
                 continue
