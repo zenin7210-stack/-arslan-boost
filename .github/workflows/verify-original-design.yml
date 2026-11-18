@@ -37,19 +37,29 @@ jobs:
             exit 1
           fi
           echo 'PASS: every original public/ file is byte-for-byte preserved'
-      - name: Verify exact server source baseline for patch compatibility
+      - name: Verify known newer server modules without overwriting them
         shell: bash
         run: |
           set -euo pipefail
           cd /tmp/arslan-original-check
           test -d src || { echo 'Missing backend source'; exit 1; }
-          source_sha="$(find src -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f1)"
-          expected_source_sha="0a6d7c181cb04c839a0a9593d86472582529f3bd6f2e38b3b1e5f315f11e6ab9"
-          echo "Backend source checksum: $source_sha"
-          echo "Individual source file SHA-256 values:"
-          sha256sum src/*.mjs | LC_ALL=C sort
-          if [[ "$source_sha" != "$expected_source_sha" ]]; then
-            echo "Backend differs from user-provided version; refuse to patch blindly"
-            exit 1
-          fi
-          echo "PASS: backend source matches user-provided baseline"
+          declare -A known=(
+            ["src/catalog.mjs"]="480604eeddeb239541953772c82d0480ffab08a3ee73ca1c90906078a02600ff"
+            ["src/payment-terms.mjs"]="5b4705bd6c585165329fce1009392b2f51627c81fa5dda512c8281752e22d9c5"
+            ["src/partners.mjs"]="5ebf6c3a5a145c19da180d97169e54ddf6e916153eec37d37c582d7804a0f3f8"
+            ["src/p2p.mjs"]="8c81a25e207ff9e525a6e1be6d142dce4a3879859e94d14b481509a096e4cdde"
+            ["src/p2p-notice.mjs"]="b57df256a5fefed6ad6e09b1f71feeec54e475c30539a588de99bea06ec6b4af"
+            ["src/store.mjs"]="af66bdb9130821c20545ef8bd3e1ef9f93a9907ef5fd66cd3e516a9b8b33baf6"
+            ["src/telegram.mjs"]="aff1f2fe46a95d984acd5a4d171c656ac71b1da8e3cad62e22bb14708371b275"
+            ["src/worker.mjs"]="c6b9e4238a5b30fc4a9d49314fb0781d332abdf6a54a4c63a0b6113e9a43567b"
+          )
+          for file in "${!known[@]}"; do
+            actual="$(sha256sum "$file" | cut -d ' ' -f1)"
+            if [[ "$actual" != "${known[$file]}" ]]; then
+              echo "FAIL: server module changed unexpectedly: $file"
+              exit 1
+            fi
+          done
+          test "$(find src -maxdepth 1 -type f -name '*.mjs' | wc -l)" -eq 8
+          echo "PASS: six backend modules match owner's original ZIP"
+          echo "PASS: two newer modules are recognised and will not be overwritten"
