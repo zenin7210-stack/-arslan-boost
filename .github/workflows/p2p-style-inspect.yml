@@ -1,0 +1,37 @@
+name: Extract approved P2P styling for scheduled update (read-only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/p2p-style-inspect.yml]
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Extract original CSS from integrity-checked release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          mkdir -p /tmp/arslan-p2p
+          unzip -p "$ZIP" 'arslan-boost-cloudflare/public/assets/p2p.css' > /tmp/arslan-p2p/p2p.css
+          test -s /tmp/arslan-p2p/p2p.css
+      - name: Publish inspected static stylesheet to isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions-bot
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout --orphan staging-p2p-css-20261119
+          git rm -rf --quiet . || true
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          mkdir public
+          cp /tmp/arslan-p2p/p2p.css public/
+          git add public
+          git commit -m "P2P CSS inspection only"
+          git push --force origin HEAD:refs/heads/staging-p2p-css-20261119
