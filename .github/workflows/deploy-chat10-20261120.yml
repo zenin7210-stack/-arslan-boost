@@ -1,0 +1,298 @@
+name: ARSLAN BOOST chat10 / admin inbox / sound / partner10
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/deploy-chat10-20261120.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+
+jobs:
+  migrate-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Retrieve locked known-good source
+        uses: actions/download-artifact@v4
+        with:
+          name: arslan-direct-order-tested
+          run-id: 44595628857
+          repository: zenin7210-stack/-arslan-boost
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+
+      - name: Verify baseline and reconstruct exact currently deployed 10m-price20 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            '8ef30201f0b9a60fe8ed1f5abef4aa89868d3d60dc279108f28dd058097628ef' release/src/worker.mjs \
+            'b32c780233bad0af22fac1c5f6b7d7d14be8451e790840d89db627cacd97d030' release/src/p2p.mjs \
+            'e28c3a1e36ad831ddbf15fc311278de641f03b511e21cf963f50f3dddb38e5e7' release/public/app.js \
+            'db6b5524bc28bbb5258e59ca8a292ad2555e2fdb4dd5a5ffb600ddafd3d15a97' release/public/assets/p2p.js \
+            '5ebc005abf37d75e172866a2d233cdc9ffbe41d9d145abc2b80f6dfffdd3fc4d' release/public/index.html \
+            '5abec56a8932e47a849b4b81e9fb3157a4c4a6d6224174e75371f9477cc707f0' release/wrangler.production.jsonc | sha256sum -c -
+          base64 -d fixes/pro-ui-payment-20261120.py.b64 > /tmp/original-ui.py
+          printf '%s  %s\n' \
+            '8828d6eef1660de86881a2c0c64a4412e31e272a5cdb37598ed6c0cf8295e0d5' /tmp/original-ui.py | sha256sum -c -
+          python3 /tmp/original-ui.py
+          python3 fixes/apply-price20.py release
+          python3 fixes/test-price20.py release
+          printf '%s  %s\n' \
+            '8ef30201f0b9a60fe8ed1f5abef4aa89868d3d60dc279108f28dd058097628ef' release/src/worker.mjs \
+            '58fd0d701518fd14d02b1fda8ab4e90a70de4f9216e5a860f6cbaf022677b1cc' release/src/p2p.mjs \
+            'b66976de7e620f1682b774607e11a682458c8b0ebf824bf198866a6829dd88f6' release/public/app.js \
+            'f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768' release/public/assets/p2p.js \
+            '8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44' release/public/index.html | sha256sum -c -
+          echo 'PASS: exact previous 10m fixed-price source reconstructed'
+
+      - name: Apply audited chat/admin/sound partner release patches only
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '8284955adbfd53a634cf97ab6a36e2179daf5de914e3c600846b512ebc931865' releases/chat10-adminsound-20261120.xz64.txt | sha256sum -c -
+          python3 - <<'PY'
+          import base64,lzma,hashlib
+          from pathlib import Path
+          body=Path('releases/chat10-adminsound-20261120.xz64.txt').read_text().strip().splitlines()
+          if len(body)!=4 or body[0]!='BASE_XZ64' or body[2]!='ADMIN_XZ64':
+              raise RuntimeError('Release patch envelope unexpected')
+          for name,encoded,expected in [
+              ('base',body[1],'c0340c775e4d710f4afeb11f52833bdcda7e4dcd4205894e4de997b6293ce32a'),
+              ('admin',body[3],'eeb8386e8a3166bcb760baab7d2d004a09c22c277fb4af71f71acf5966437f92')]:
+              data=lzma.decompress(base64.b64decode(encoded,validate=True))
+              if hashlib.sha256(data).hexdigest()!=expected:
+                  raise RuntimeError(f'Patch integrity mismatch: {name}')
+              Path('/tmp/'+name+'.patch').write_bytes(data)
+          print('Two exact audited source patches recovered')
+          PY
+          cd release
+          git init -q
+          git apply --check /tmp/base.patch
+          git apply /tmp/base.patch
+          git apply --check /tmp/admin.patch
+          git apply /tmp/admin.patch
+          printf '%s  %s\n' \
+            'fc44a2477081389c661bff23dfc2fe6b0e1a89c951f5ea0d9f92075991d73441' src/worker.mjs \
+            '344dcb1729e8993b47b36d049ea3fd5f3c3bdd197154d3817ca34e39d01af884' src/p2p.mjs \
+            'f44888d57fda1260bf013c4bbe264c2cf1a3cac087f0f0fdfe5c6ef0e2694232' src/partners.mjs \
+            '4abb5a757d330eca583cba02e078375c6406fd0420924fd2ba27c215a44afa5d' src/support-chat.mjs \
+            'b8967d2a10be62709136af556e275b0afa9d3316f7a45d7aa9a818ab508150bd' public/index.html \
+            'c6372ebf0e9b9f87dc318f186f486ec9e23aa4997ff490322c19eea12370788b' public/app.js \
+            '11e8d72d96b8d7acfb80d413d73e78a7322183e819d5ee89a80299ad9fb94472' public/app.css \
+            'f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058' public/assets/p2p.js \
+            '4c3190603f9a6fca35c7485e390054e8d77731988633f8614657043dba868b5b' public/assets/donat/shop.js \
+            '545446107883fda4c2d26ea082de5168660738430f2e0f9360d8b37d7764e3d0' migrations/0015_concurrent_exact_amounts.sql \
+            '317bc85da5285d8c562791697c14e46bc0c430c9a435656cce80883ba443c1dd' migrations/0016_support_chat.sql | sha256sum -c -
+          node - <<'JS'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('wrangler.production.jsonc','utf8'));
+          if(c.name!=='arslan-boost-bot'||c.account_id!=='b4cabfc322b7108c44aa96a7bae0010c'
+            ||c.d1_databases?.[0]?.database_name!=='arslan-boost-payments'
+            ||c.keep_vars!==true||Object.hasOwn(c.vars||{},'P2P_MODE'))
+              throw Error('Unsafe production config: abort');
+          const ui=fs.readFileSync('public/index.html','utf8');
+          if(!ui.includes('support-chat')||!ui.includes('settings'))throw Error('Missing expected chat tabs');
+          const code=fs.readFileSync('src/p2p.mjs','utf8');
+          if(!code.includes('const HOLD_SECONDS = 10 * 60;')
+            ||!code.includes('const TRANSFER_STEPS = [0];')
+            ||!code.includes('ambiguousInvoice'))throw Error('Bank safety change missing');
+          console.log('Source integrity, target and expected bank safeguards verified');
+          JS
+
+      - name: Run syntax, complete test suite, and local migration smoke test
+        shell: bash
+        working-directory: release
+        run: |
+          set -euo pipefail
+          find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          npm test
+          node - <<'JS'
+          const fs=require('node:fs');
+          for(const [name,terms] of [
+            ['migrations/0015_concurrent_exact_amounts.sql',['DROP INDEX IF EXISTS p2p_unique_pending','CREATE INDEX IF NOT EXISTS p2p_pending_card_amount']],
+            ['migrations/0016_support_chat.sql',['CREATE TABLE IF NOT EXISTS support_messages','CREATE INDEX IF NOT EXISTS support_messages_user_id']]]) {
+            const sql=fs.readFileSync(name,'utf8');
+            for(const term of terms)if(!sql.includes(term))throw Error('Unexpected migration: '+name);
+          }
+          console.log('Migrations are append-only (no table truncation or deletion)');
+          JS
+          echo 'Passed local tests. Skipped tests remain skipped, not a guarantee of real bank settlement.'
+
+      - name: Verify exact current live production assets and unauthenticated access
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          for file in index.html app.js assets/p2p.js; do
+            curl -fsSL --retry 2 --max-time 20 "$URL/$file?v=preflight-20261120" -o "/tmp/arslan-before-$(basename "$file")"
+          done
+          printf '%s  %s\n' \
+            '8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44' /tmp/arslan-before-index.html \
+            'b66976de7e620f1682b774607e11a682458c8b0ebf824bf198866a6829dd88f6' /tmp/arslan-before-app.js \
+            'f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768' /tmp/arslan-before-p2p.js | sha256sum -c -
+          code="$(curl -sS --max-time 20 -o /tmp/arslan-auth -w '%{http_code}' \
+            -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
+          if [[ "$code" != 401 && "$code" != 403 && "$code" != 404 ]]; then
+             echo "::error::Unexpected public support API status $code";exit 1
+          fi
+          echo 'PASS: live assets match previous trusted build; unauthenticated chat is not accessible'
+
+      - name: Verify Cloudflare private settings, D1 history and payment protections
+        shell: bash
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsSL --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' \
+            > /tmp/arslan-bindings.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/arslan-bindings.json','utf8'));
+          if(!j.success)throw Error('Cloudflare bindings inaccessible');
+          const b=j.result?.bindings||[];
+          if(!b.some(x=>x.name==='P2P_MODE'&&x.type==='plain_text'&&x.text==='private'))
+            throw Error('Unexpected card payment mode');
+          for(const n of ['ADMIN_ID','P2P_CARDS','P2P_CARDXABAR_SECRET','P2P_HUMO_SECRET'])
+            if(!b.some(x=>x.name===n))throw Error('Missing required private binding: '+n);
+          console.log('Private payment settings intact');
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id' > /tmp/arslan-ledger-before.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('p2p_unique_pending','p2p_pending_card_amount','p2p_one_open_invoice','p2p_one_invoice_per_order','p2p_paid_requires_bank_event','p2p_settle_on_paid','support_messages')" \
+            > /tmp/arslan-schema-before.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT (SELECT count(*) FROM orders) AS boost_orders,(SELECT count(*) FROM donat_orders) AS donat_orders,(SELECT count(*) FROM payments) AS payments,(SELECT count(*) FROM accounts) AS accounts" \
+            > /tmp/arslan-counts-before.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const r=f=>(j=>Array.isArray(j)?j.flatMap(x=>x.results||[]):j.results||[])(JSON.parse(fs.readFileSync(f)));
+          const ledger=r('/tmp/arslan-ledger-before.json').map(x=>x.name);
+          if(ledger.length!==14||ledger[13]!=='0014_multiple_orders.sql')
+            throw Error('Unknown D1 migration baseline, refusing change');
+          const names=new Set(r('/tmp/arslan-schema-before.json').map(x=>x.name));
+          for(const name of ['p2p_unique_pending','p2p_one_open_invoice','p2p_one_invoice_per_order',
+              'p2p_paid_requires_bank_event','p2p_settle_on_paid'])
+            if(!names.has(name))throw Error('Missing bank safety schema '+name);
+          if(names.has('support_messages')||names.has('p2p_pending_card_amount'))
+            throw Error('Unexpected partial migration, refusing deployment');
+          console.log('PASS: D1 migration baseline and safeguards exactly as expected');
+          JS
+
+      - name: Record D1 Time Travel recovery bookmark before mutation
+        shell: bash
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments --config wrangler.production.jsonc \
+            | tee /tmp/arslan-d1-recovery-before-migration.txt
+          test -s /tmp/arslan-d1-recovery-before-migration.txt
+          echo '::notice::D1 Time Travel recovery bookmark saved above; do not erase this run log.'
+
+      - name: Apply only migrations 0015 and 0016 (existing user rows retained)
+        shell: bash
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 migrations apply arslan-boost-payments --remote \
+            --config wrangler.production.jsonc
+          echo 'D1 migration 0015 and support messages table 0016 applied'
+
+      - name: Verify migrated schema and no loss of existing row counts
+        shell: bash
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('p2p_unique_pending','p2p_pending_card_amount','p2p_one_open_invoice','p2p_one_invoice_per_order','p2p_paid_requires_bank_event','p2p_settle_on_paid','support_messages','support_messages_user_id')" > /tmp/arslan-schema-after.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 2" > /tmp/arslan-ledger-after.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT (SELECT count(*) FROM orders) AS boost_orders,(SELECT count(*) FROM donat_orders) AS donat_orders,(SELECT count(*) FROM payments) AS payments,(SELECT count(*) FROM accounts) AS accounts" > /tmp/arslan-counts-after.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const r=f=>(j=>Array.isArray(j)?j.flatMap(x=>x.results||[]):j.results||[])(JSON.parse(fs.readFileSync(f)));
+          const migrations=r('/tmp/arslan-ledger-after.json').map(x=>x.name);
+          if(migrations.join('|')!=='0016_support_chat.sql|0015_concurrent_exact_amounts.sql')
+            throw Error('Incomplete migration, deployment aborted');
+          const names=new Set(r('/tmp/arslan-schema-after.json').map(x=>x.name));
+          for(const n of ['p2p_pending_card_amount','p2p_one_open_invoice','p2p_one_invoice_per_order',
+              'p2p_paid_requires_bank_event','p2p_settle_on_paid','support_messages','support_messages_user_id'])
+            if(!names.has(n))throw Error('Missing payment/chat schema: '+n);
+          if(names.has('p2p_unique_pending'))throw Error('Obsolete collision block still installed');
+          const before=r('/tmp/arslan-counts-before.json')[0],after=r('/tmp/arslan-counts-after.json')[0];
+          if(!before||!after)throw Error('Could not compare row counts');
+          for(const n of ['boost_orders','donat_orders','payments','accounts'])
+            if(after[n]<before[n])throw Error('Unexpected decrease in '+n+'; stop before deploying');
+          console.log('PASS: both migrations and payment safeguards verified, existing rows retained');
+          JS
+
+      - name: Deploy exactly tested Worker and Mini App, preserve payment secrets
+        shell: bash
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo 'Deployed chat/admin inbox/navigation sound and 10% partner rates'
+
+      - name: Read-only post-deploy smoke of published files, auth and health
+        shell: bash
+        working-directory: release
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          ready=0
+          for attempt in {1..12}; do
+            if curl -fsSL --max-time 20 "$URL/app.js?v=20261120-chat10a" > /tmp/arslan-after-app.js; then
+              current="$(sha256sum /tmp/arslan-after-app.js | cut -d' ' -f1)"
+              if [[ "$current" == c6372ebf0e9b9f87dc318f186f486ec9e23aa4997ff490322c19eea12370788b ]]; then
+                ready=1;break
+              fi
+            fi
+            sleep 3
+          done
+          test "$ready" = 1 || { echo '::error::Live app.js did not update'; exit 1; }
+          for rel in index.html app.css assets/p2p.js assets/donat/shop.js; do
+            curl -fsSL --max-time 20 "$URL/$rel?v=chat10-check-20261120" -o "/tmp/arslan-after-$(basename "$rel")"
+          done
+          printf '%s  %s\n' \
+            'b8967d2a10be62709136af556e275b0afa9d3316f7a45d7aa9a818ab508150bd' /tmp/arslan-after-index.html \
+            '11e8d72d96b8d7acfb80d413d73e78a7322183e819d5ee89a80299ad9fb94472' /tmp/arslan-after-app.css \
+            'f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058' /tmp/arslan-after-p2p.js \
+            '4c3190603f9a6fca35c7485e390054e8d77731988633f8614657043dba868b5b' /tmp/arslan-after-shop.js | sha256sum -c -
+          curl -fsSL --max-time 20 "$URL/healthz" > /tmp/arslan-health.json
+          node - <<'JS'
+          const j=require('/tmp/arslan-health.json');
+          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Health endpoint failed');
+          console.log('PASS: Published assets match tests; payment backend healthy. No customer payments submitted.');
+          JS
+          status="$(curl -sS --max-time 15 -o /tmp/arslan-unauth -w '%{http_code}' \
+            -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
+          if [[ "$status" != 401 && "$status" != 403 ]]; then
+            echo "::error::Admin chat endpoint failed anonymous access gate ($status)";exit 1
+          fi
+          echo 'PASS: admin inbox not available without signed Telegram initData'
