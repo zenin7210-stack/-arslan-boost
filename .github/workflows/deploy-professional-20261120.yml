@@ -142,7 +142,7 @@ jobs:
             '7e593a363272b759ffa3d2609fc82eedd65e8a237108d501be04382059f910ad' public/index.html \
             'be651e28a5e070394594e4ba250294df243def3dd753537b116498cba0f11928' public/assets/start-banner.jpg \
             '575d46e6bbd2bfc51582b285d498698e9885101901c67aa1166b0d61a52d39af' migrations/0017_support_dialogs.sql | sha256sum -c -
-          echo 'PASS: exact audited source and owner's banner confirmed'
+          echo "PASS: exact audited source and owner's banner confirmed"
 
       - name: Run syntax, complete test suite, and local migration smoke test
         shell: bash
