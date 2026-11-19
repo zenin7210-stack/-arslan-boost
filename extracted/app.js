@@ -75,10 +75,10 @@
     historyRefresh:'Обновить', historyNoOrders:'Заказов пока нет',
     historyNoOrdersHint:'Здесь появятся ваши заказы и их статусы после оформления.',
     historyNoPayments:'Платежей пока нет',
-    historyNoPaymentsHint:'Пополнения баланса и оплаты заказов появятся здесь.',
+    historyNoPaymentsHint:'Здесь появятся оплаты ваших заказов.',
     historyNoMatches:'Нет записей с таким статусом',
     historyNoMatchesHint:'Выберите другой фильтр или покажите все операции.',
-    historyStartOrder:'Оформить заказ', historyStartTopup:'Пополнить баланс',
+    historyStartOrder:'Оформить заказ', historyStartTopup:'К товарам',
     historyClearFilter:'Показать все', historyConnectionHint:'Проверьте подключение и обновите историю.',
     historyOrderPaidWaiting:'Оплачено · ожидает выполнения'
   });
@@ -86,10 +86,10 @@
     historyRefresh:'Yangilash', historyNoOrders:'Hozircha buyurtmalar yo‘q',
     historyNoOrdersHint:'Buyurtma berganingizdan keyin uning holati shu yerda ko‘rinadi.',
     historyNoPayments:'Hozircha to‘lovlar yo‘q',
-    historyNoPaymentsHint:'Balans to‘ldirish va buyurtma to‘lovlari shu yerda chiqadi.',
+    historyNoPaymentsHint:'Buyurtma to‘lovlari shu yerda chiqadi.',
     historyNoMatches:'Bu holatda yozuvlar yo‘q',
     historyNoMatchesHint:'Boshqa filtrni tanlang yoki barcha operatsiyalarni ko‘ring.',
-    historyStartOrder:'Buyurtma berish', historyStartTopup:'Balansni to‘ldirish',
+    historyStartOrder:'Buyurtma berish', historyStartTopup:'Mahsulotlar',
     historyClearFilter:'Barchasini ko‘rsatish', historyConnectionHint:'Internetni tekshiring va tarixni yangilang.',
     historyOrderPaidWaiting:'To‘langan · bajarilishi kutilmoqda'
   });
@@ -198,7 +198,7 @@
     show: (html, heading) => showSheet('p2p', html, heading),
     active: () => state.sheet === 'p2p',
     sync: syncState, orders: showOrderHistory,
-    back: () => renderTopup()
+    back: showOrderHistory
   });
   const keyboardDone = $('#keyboard-done');
   const keyboardFields = 'input:is(:not([type]), [type=text], [type=search], [type=number], [type=tel], [type=email], [type=url]), textarea';
@@ -384,7 +384,7 @@
       const filtered=state.historyLoaded&&allEntries.length>0;
       const titleKey=unavailable?'unavailableHistory':filtered?'historyNoMatches':isOrder?'historyNoOrders':'historyNoPayments';
       const hintKey=unavailable?'historyConnectionHint':filtered?'historyNoMatchesHint':isOrder?'historyNoOrdersHint':'historyNoPaymentsHint';
-      const action=unavailable?'refresh':filtered?'clear-filter':isOrder?'new-order':'new-topup';
+      const action=unavailable?'refresh':filtered?'clear-filter':isOrder?'new-order':'browse-products';
       const actionLabel=unavailable?'historyRefresh':filtered?'historyClearFilter':isOrder?'historyStartOrder':'historyStartTopup';
       root.innerHTML=`<div class="history-empty">
         <span class="history-empty-icon" aria-hidden="true">${glyph(isOrder?'receipt':'wallet')}</span>
@@ -547,23 +547,21 @@
     const c=state.context;
     const orderData = () => ({...c.order, lang:state.lang,
       expectedAmount:c.order.amount, requestId:requestId(c,'checkout')});
-    c.method ||= 'uzcard';
     const available = method => method === 'stars'
       ? starsEnabled(config.orderStarsRate, config.orderStarsMax)
       : state.p2pMethods.includes(method);
+    if(!c.method||!available(c.method)) c.method=['uzcard','humo','stars'].find(available)||'stars';
     showSheet('checkout', orderSummary(c)+`
       <h3 class="arslan-payment-subhead">${escape(t('paymentSelect'))}</h3>
       ${paymentMethodTiles(c.method, true)}
       ${c.method==='stars'?paymentTerms(available('stars')):''}
-      <p class="arslan-wallet-hint">${escape(t('balanceHint',{amount:sum(state.balance)}))}</p>
       <p class="arslan-wallet-hint">${escape(t('boostPaidNotice'))}</p>
       <button class="wallet-continue" type="button" id="payment-continue">${escape(t('continue'))}</button>
-      <button class="secondary" type="button" id="order-topup">${escape(t('walletTitle'))}</button>`,t('choosePayment'));
+`,t('choosePayment'));
     const back = () => {state.context=c;renderPayments();};
     body.querySelectorAll('[data-payment-choice]').forEach(button => {
       button.onclick = () => { c.method=button.dataset.paymentChoice; renderPayments(); };
     });
-    $('#order-topup').onclick=()=>openTopup(back);
     const button=$('#payment-continue');
     const accept=body.querySelector('#accept-payment-terms');
     const update=()=>{button.disabled=state.busy||!state.service||!available(c.method)
@@ -919,7 +917,14 @@
   }
   function errorMessage(error){const mapping={invalid_game_id:'invalidId',insufficient_balance:'notEnough',stars_not_configured:'starsNotConfigured',stars_quote_changed:'rateChanged',order_quote_changed:'orderQuoteChanged',request_conflict:'paymentConflict',terms_required:'termsRequired',unauthorized:'sessionExpired',session_expired:'sessionExpired',p2p_invoice_in_progress:'transferInProgress',p2p_amount_unavailable:'transferBusy',p2p_disabled:'transferUnavailable',p2p_method_unavailable:'transferUnavailable'};if(error.message==='order_already_active')return state.lang==='ru'?'Завершите текущий заказ или отмените неоплаченную заявку, прежде чем создавать новый.':'Yangi buyurtma uchun avval joriy buyurtma tugatilishi yoki to‘lanmagan ariza bekor qilinishi kerak.';if(error.message==='order_edit_locked')return state.lang==='ru'?'Изменение уже недоступно: администратор начал выполнение.':'Buyurtma ustida ish boshlangan, o‘zgartirish mumkin emas.';return t(mapping[error.message]||'connectionError');}
   function openInfo(name){
-    if(name==='balance'){openTopup();return;}
+    if(name==='balance'){
+      showSheet('balance-readonly', `<div class="checkout-summary">
+        <strong>${escape(t('balance'))}: ${escape(sum(state.balance))}</strong>
+        <p>${escape(state.lang==='ru'?'Новые пополнения отключены. Для сверки или возврата средств обратитесь в поддержку.':'Yangi balans to‘ldirish o‘chirildi. Pul qoldig‘ini tekshirish yoki qaytarish uchun yordamga murojaat qiling.')}</p></div>
+        <button class="action" type="button" id="legacy-wallet-support">${escape(t('support'))}</button>`,t('balance'));
+      $('#legacy-wallet-support').onclick=()=>openInfo('support');
+      return;
+    }
     const textKey={support:'supportText',profile:'profileText',security:'securityText',about:'aboutText',promo:'promoText'}[name]||'aboutText';
     const user=tg?.initDataUnsafe?.user;
     let html=`<p>${escape(t(textKey))}</p>`;
@@ -931,7 +936,7 @@
   }
   const shop = window.initArslanShop({
     config,
-    openTopup, transferOrderChoices, bindTransferOrder,
+    transferOrderChoices, bindTransferOrder,
     syncState, walletBalance: () => state.balance,
     lang: () => state.lang,
     api,
@@ -976,7 +981,7 @@
     const action=event.target.closest('[data-history-action]');
     if (action) {
       if (action.dataset.historyAction==='new-order') nav('home',true);
-      else if (action.dataset.historyAction==='new-topup') openTopup(() => nav('history'));
+      else if (action.dataset.historyAction==='browse-products') {closeSheet();nav('donat',true);}
       else if (action.dataset.historyAction==='clear-filter') {state.filter='all';renderHistory();}
       else if (action.dataset.historyAction==='refresh') syncState();
       return;
@@ -1066,7 +1071,7 @@
     }boostEta=server.boostEta;state.service=true;updatePrice();await syncState();if(state.sheet==='topup'&&!state.busy)renderTopup();else if(state.sheet==='checkout')renderPayments();}catch{}}
   loadConfig().then(() => {
     if (state.sheet) return;
-    if (launchSection === 'wallet') openTopup();
+    if (launchSection === 'wallet') openInfo('balance');
     if (launchSection === 'partners') shop.openPartners();
   });
   const intro=$('#intro');let introTimeout;function finishIntro(){clearTimeout(introTimeout);intro.classList.remove('show');intro.setAttribute('aria-hidden','true');}
