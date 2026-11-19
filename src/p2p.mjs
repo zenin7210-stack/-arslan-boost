@@ -343,11 +343,11 @@ export async function p2pApi(request, env, store, user, data, path, enqueueRevie
       throw new RequestError("p2p_options_" + phase + "_failed", 503);
     }
   }
-  if (path === "invoice/quote" && request.method === "POST") {
-    return quoteInvoice(store, env, user, data);
-  }
-  if (path === "invoice" && request.method === "POST") {
-    return publicInvoice(env, await createInvoice(store, env, user, data));
+  if ((path === "invoice/quote" || path === "invoice") && request.method === "POST") {
+    // New prepaid wallet invoices disabled. Order-linked P2P invoices use
+    // createP2pOrder, not these endpoints; old invoice status and cancellation
+    // remain accessible to the owner.
+    throw new RequestError("topup_disabled", 409);
   }
   const match = /^invoice\/([0-9]{1,16})\/(status|check|cancel)$/.exec(path);
   if (!match || (match[2] === "status" ? request.method !== "GET" : request.method !== "POST")) {
