@@ -1,0 +1,63 @@
+name: Inspect actual D1 invoice failures and stale orders (read only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/invoice-live-diagnostics-20261119.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check invoices and current SQL without modifying user data
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          mkdir -p /tmp/live
+          unzip -p "$ZIP" arslan-boost-cloudflare/wrangler.production.jsonc > /tmp/live/wrangler.production.jsonc
+          cd /tmp/live
+          queries=(
+            "SELECT status, COUNT(*) AS n FROM invoices GROUP BY status"
+            "SELECT status, COUNT(*) AS n FROM orders GROUP BY status"
+            "SELECT status, COUNT(*) AS n FROM donat_orders GROUP BY status"
+            "SELECT status, method, COUNT(*) AS n FROM payments GROUP BY status,method"
+            "SELECT COUNT(*) AS n FROM p2p_incoming"
+            "SELECT COUNT(*) AS n FROM accounts"
+            "SELECT COUNT(*) AS n FROM p2p_card_flags"
+            "SELECT COUNT(*) AS n FROM invoices WHERE status='pending' AND expires_at < unixepoch('now')"
+            "SELECT COUNT(*) AS n FROM orders o WHERE o.status='pending' AND EXISTS(SELECT 1 FROM payments p JOIN invoices i ON i.order_payment_id=p.id WHERE p.order_id=o.id AND i.status IN('expired','rejected'))"
+            "SELECT COUNT(*) AS n FROM donat_orders d WHERE d.status='pending' AND EXISTS(SELECT 1 FROM payments p JOIN invoices i ON i.order_payment_id=p.id WHERE p.donat_order_id=d.id AND i.status IN('expired','rejected'))"
+            "SELECT COUNT(*) AS n FROM orders o WHERE o.status='pending' AND NOT EXISTS(SELECT 1 FROM payments p WHERE p.order_id=o.id)"
+            "SELECT COUNT(*) AS n FROM donat_orders d WHERE d.status='pending' AND NOT EXISTS(SELECT 1 FROM payments p WHERE p.donat_order_id=d.id)"
+            "SELECT COUNT(*) AS n FROM invoices WHERE order_payment_id IS NULL"
+            "SELECT COUNT(*) AS n FROM invoices WHERE checked_at IS NOT NULL AND status='pending'"
+            "SELECT COUNT(*) AS n FROM invoices WHERE status='pending' AND order_payment_id IS NULL"
+            "SELECT COUNT(*) AS n FROM invoices WHERE status='paid'"
+            "SELECT COUNT(*) AS n FROM invoices WHERE status='pending' AND user_id = (SELECT user_id FROM invoices ORDER BY id DESC LIMIT 1)"
+            "SELECT COUNT(*) AS n FROM invoices WHERE order_payment_id IS NULL AND user_id = (SELECT user_id FROM invoices ORDER BY id DESC LIMIT 1)"
+          )
+          i=0
+          for q in "${queries[@]}"; do
+            i=$((i+1))
+            if npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "$q" > /tmp/q.json 2>/tmp/err; then
+              QINDEX="$i" node - <<'JS'
+          const fs=require('node:fs'),x=JSON.parse(fs.readFileSync('/tmp/q.json','utf8'));
+          const rows=(Array.isArray(x)?x:[x]).flatMap(z=>z.results||[]);
+          console.log('QUERY',process.env.QINDEX,'SUCCESS',JSON.stringify(rows).slice(0,2500));
+          JS
+            else
+              echo "QUERY $i ERROR"
+              grep -E "SQLITE_ERROR|Error|no such|constraint" /tmp/err | tail -n 3 || true
+            fi
+          done
