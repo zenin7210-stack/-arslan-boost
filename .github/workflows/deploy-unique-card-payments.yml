@@ -1,4 +1,4 @@
-name: ARSLAN BOOST repair owner card top-up loading and old invoice recovery
+name: ARSLAN BOOST diagnose card loading without touching payments
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -77,6 +77,9 @@ jobs:
           assert.match(p2p,/p2p-quote-banner/);
           assert.ok(p2p.includes('const prettyAmount = value =>'));
           assert.ok(p2p.includes('id="p2p-load-retry"'));
+          assert.ok(p2p.includes("errorCode:'Xato kodi'"));
+          assert.ok(p2p.includes('await loadOptionsSafely()'));
+          assert.ok(p2p.includes('network_timeout'));
           assert.ok(p2p.includes('showLoading(() => open(preferredMethod))'));
           assert.ok(backend.includes("await expireInvoices(store, now(), env.P2P_MODE !== 'manual')"));
           assert.match(p2p,/p2p-next-button/);
@@ -85,7 +88,7 @@ jobs:
           assert.doesNotMatch(p2p,/id="p2p-latest"/);
           assert.match(backend,/const TRANSFER_STEPS = \[0,100,200,300,400,500,600,700,800,900\]/);
           assert.match(backend,/requested_amount/);
-          assert.match(index,/p2p\.js\?v=20261119-recover/);
+          assert.match(index,/p2p\.js\?v=20261119-diagnostics/);
           assert.match(css,/#p2p-cancel-yes/);
           console.log('PASS: exact sum preview, 100 UZS fallback, cancellation screen and cached UI assets');
           JS
@@ -126,7 +129,7 @@ jobs:
           assert.equal('P2P_MODE' in (cfg.vars||{}),false);
           assert.equal(fs.readdirSync('migrations').filter(f=>f.endsWith('.sql')).at(-1),'0012_requested_card_topup.sql');
           assert.match(fs.readFileSync('migrations/0012_requested_card_topup.sql','utf8'),/ALTER TABLE invoices/);
-          assert.match(fs.readFileSync('public/index.html','utf8'),/p2p\.js\?v=20261119-recover/);
+          assert.match(fs.readFileSync('public/index.html','utf8'),/p2p\.js\?v=20261119-diagnostics/);
           JS
       - name: Read D1 migration ledger and existing safeguards (no changes)
         id: p2p_schema
