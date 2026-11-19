@@ -474,17 +474,25 @@
       }
     }
 
-    function showLoading() {
+    function showLoading(retryAction) {
       const version = show(`<p class="p2p-loading" role="status">${e(t('loading'))}</p>
         <p class="p2p-feedback" role="status"></p>
+        <button type="button" class="p2p-action" id="p2p-load-retry" hidden>${e(t('retryLoading'))}</button>
         <button type="button" class="secondary" id="p2p-load-back">${e(t('back'))}</button>`);
       within('#p2p-load-back').onclick = returnTo;
+      within('#p2p-load-retry').onclick = () => retryAction?.();
       return version;
+    }
+    function showLoadingFailure(version,error) {
+      if(!active(version))return;
+      warning(error);
+      const retry=within('#p2p-load-retry');
+      if(retry)retry.hidden=false;
     }
 
     async function resume(id, back) {
       returnTo = back;
-      const version = showLoading();
+      const version = showLoading(() => resume(id, back));
       try {
         const result = await ui.api(`invoice/${id}/status`, null, 'GET');
         if (!active(version)) return;
@@ -492,13 +500,13 @@
         deadline = 0;
         renderInvoice();
       } catch (error) {
-        if (active(version)) warning(error);
+        showLoadingFailure(version,error);
       }
     }
 
     async function open(preferredMethod) {
       returnTo = ui.back;
-      const version = showLoading();
+      const version = showLoading(() => open(preferredMethod));
       try {
         options = await ui.api('invoice/options', {});
         if (!active(version)) return;
@@ -513,13 +521,13 @@
           renderForm();
         }
       } catch (error) {
-        if (active(version)) warning(error);
+        showLoadingFailure(version,error);
       }
     }
 
     async function start(selectedAmount, selectedMethod, back) {
       returnTo = typeof back === 'function' ? back : ui.back;
-      const version = showLoading();
+      const version = showLoading(() => start(selectedAmount, selectedMethod, back));
       try {
         options = await ui.api('invoice/options', {});
         if (!active(version)) return;
@@ -538,11 +546,7 @@
         deadline = 0;
         renderInvoice();
       } catch (error) {
-        if (active(version)) {
-          warning(error);
-          const retry = within('#p2p-load-back');
-          if (retry) retry.textContent = t('back');
-        }
+        showLoadingFailure(version,error);
       }
     }
 
