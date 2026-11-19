@@ -1,0 +1,27 @@
+name: Inspect public ARSLAN BOOST versions only
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/inspect-live-pages.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public files read-only
+        run: |
+          set -euo pipefail
+          mkdir -p snapshot
+          for f in index.html app.js assets/p2p.js; do
+            out="snapshot/$(echo "$f" | tr / _)"
+            curl -fsSL --retry 2 --max-time 25 "https://arslan-boost-bot.zenin7210.workers.dev/$f" -o "$out"
+            sha256sum "$out"
+          done
+          grep -oE 'assets/p2p.js\\?v=[A-Za-z0-9_-]+|app.js\\?v=[A-Za-z0-9_-]+' snapshot/index.html || true
+          echo 'No order or payment endpoints called'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: live-public-files-readonly
+          path: snapshot
+          retention-days: 1
