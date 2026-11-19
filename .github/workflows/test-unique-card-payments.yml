@@ -1,4 +1,4 @@
-name: Test precise P2P failure codes without financial writes
+name: Test corrected P2P error classification fixtures
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
