@@ -513,7 +513,7 @@
     shop.applyLanguage();
     const banner=config.banners?.[state.lang];if(banner){try{const url=new URL(banner,document.baseURI);if(['https:','http:'].includes(url.protocol))$('.hero').style.backgroundImage=`url(${JSON.stringify(url.href)})`;}catch{}}
     all('[data-mode]').forEach(button=>button.textContent=t(button.dataset.mode));$('#mode-label').textContent=t('selectedMode')+': '+t(state.mode);
-    $('#quick-balance').textContent=sum(state.balance);$('#setting-balance').textContent=sum(state.balance);updatePrice();renderHistory();
+    $('#quick-balance')?.textContent=sum(state.balance);$('#setting-balance')?.textContent=sum(state.balance);updatePrice();renderHistory();
     const sheet=state.sheet;
     if(sheet?.startsWith('rank:'))openRanks(sheet.split(':')[1]);
     else if(sheet==='checkout')renderPayments();
@@ -874,8 +874,8 @@
         gameId.value = boostData.gameId;
         updatePrice();
       }
-      $('#quick-balance').textContent = sum(state.balance);
-      $('#setting-balance').textContent = sum(state.balance);
+      $('#quick-balance')?.textContent = sum(state.balance);
+      $('#setting-balance')?.textContent = sum(state.balance);
       const topupBalance=$('#topup-balance');
       if(topupBalance)topupBalance.textContent=sum(state.balance);
       if (previousCards !== [state.p2pVisible, state.p2pAdmin, ...state.p2pMethods].join(',')) {
@@ -1047,7 +1047,7 @@
     try{await syncState();}finally{button.disabled=false;}
   };
   function setMotion(reduced){document.body.classList.toggle('reduce-motion',reduced);$('#motion-toggle').classList.toggle('on',reduced);storage.set('ab-reduced-motion',String(reduced));}
-  $('#setting-balance-card')?.addEventListener('click',()=>openInfo('balance'));$('#motion-row').onclick=()=>setMotion(!document.body.classList.contains('reduce-motion'));if(storage.get('ab-reduced-motion')==='true')setMotion(true);
+  $('#motion-row').onclick=()=>setMotion(!document.body.classList.contains('reduce-motion'));if(storage.get('ab-reduced-motion')==='true')setMotion(true);
   const user=tg?.initDataUnsafe?.user;if(user){$('#username').textContent=[user.first_name,user.last_name].filter(Boolean).join(' ')||t('appUser');$('#telegram-id').textContent=user.username?'@'+user.username:'ID: '+user.id;const avatar=$('.avatar'),initial=(user.first_name||'A').slice(0,1);avatar.textContent=initial;if(user.photo_url){try{const photo=new URL(user.photo_url);if(photo.protocol==='https:'){const img=new Image();img.alt='';img.width=54;img.height=54;img.decoding='async';img.referrerPolicy='no-referrer';img.onload=()=>avatar.replaceChildren(img);img.onerror=()=>{avatar.textContent=initial;};img.src=photo.href;}}catch{}}}
   $('.tg-icon.left').onclick=()=>{if(overlay.classList.contains('open'))closeSheet();else nav('services',true);};$('.tg-icon.right').onclick=openMenu;
   keyboardDone.addEventListener('pointerdown', event => event.preventDefault());
