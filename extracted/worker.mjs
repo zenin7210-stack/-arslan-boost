@@ -159,7 +159,7 @@ async function paymentDetails(env, payment, { invoice = false, lang = "uz" } = {
     method: payment.method, status: payment.status, orderId: payment.order_id ?? payment.donat_order_id,
     processing: processing(payment),
   };
-  if (!invoice || payment.method !== "stars" || result.status !== "pending" || result.processing) return result;
+  if (!invoice || !["topup","order"].includes(payment.kind) || payment.method !== "stars" || result.status !== "pending" || result.processing) return result;
   result.invoiceLink = await telegram(env, "createInvoiceLink", {
     title: "ARSLAN BOOST", description: payment.kind === "order"
       ? langText(lang, "Оплата заказа BOOST", "BOOST buyurtmasi uchun to‘lov")
