@@ -128,6 +128,8 @@ jobs:
           cd release
           git apply --check /tmp/pro.patch
           git apply /tmp/pro.patch
+          git apply --check ../releases/pro-native-reply-safety.patch
+          git apply ../releases/pro-native-reply-safety.patch
           cp ../releases/start-banner.jpg public/assets/start-banner.jpg
           printf '%s  %s\n' \
             '50b4c0bc5fcca570646d4dc7b64706466125fe9ff8cba86585fd76aa4deec8c5' src/worker.mjs \
