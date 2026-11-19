@@ -214,14 +214,31 @@
     const field = activeTextField();
     const viewport = window.visualViewport;
     const inset = viewport ? Math.max(0, window.innerHeight - viewport.offsetTop - viewport.height) : 0;
-    const inline = field?.closest('[data-keyboard-inline]');
-    const container = inline || field?.closest('.sheet') || document.body;
+    // iOS Telegram resizes the visual viewport, not necessarily the layout
+    // viewport. Keep the modal inside the visible area above the keyboard.
+    overlay.style.setProperty('--visible-top', Math.max(0, viewport?.offsetTop || 0) + 'px');
+    overlay.style.setProperty('--visible-height', Math.max(160, viewport?.height || window.innerHeight) + 'px');
+    document.body.classList.toggle('keyboard-open', Boolean(field));
+    // A fixed element inside .product-sheet is positioned relative to that
+    // sheet. Keep the optional Done control at the document root instead.
+    if (keyboardDone.parentElement !== document.body) document.body.append(keyboardDone);
+    keyboardDone.classList.remove('in-field');
     keyboardDone.hidden = !field;
-    keyboardDone.classList.toggle('in-field', Boolean(inline));
-    if (keyboardDone.parentElement !== container) container.append(keyboardDone);
     keyboardDone.style.setProperty('--keyboard-inset', inset + 'px');
-    overlay.style.setProperty('--product-keyboard-inset', inset + 'px');
-    document.body.classList.toggle('keyboard-open', Boolean(field) || inset > 140);
+    if (field && overlay.classList.contains('open')) {
+      requestAnimationFrame(() => {
+        if (document.activeElement !== field) return;
+        const scroller = field.closest('.widget-scroll') || field.closest('.sheet');
+        if (!scroller) return;
+        const visible = scroller.getBoundingClientRect();
+        const rect = field.getBoundingClientRect();
+        if (rect.bottom > visible.bottom - 12) {
+          scroller.scrollTop += rect.bottom - visible.bottom + 20;
+        } else if (rect.top < visible.top + 12) {
+          scroller.scrollTop -= visible.top + 20 - rect.top;
+        }
+      });
+    }
   }
   function dismissKeyboard() {
     const field = activeTextField();
@@ -323,6 +340,7 @@
       if (field.tagName === 'INPUT' && !field.readOnly) field.setAttribute('enterkeyhint', 'done');
     });
     overlay.classList.add('open');sheet.focus({preventScroll:true});
+    updateKeyboardControls();
     if (partners) sheet.scrollTop = 0;
   }
   function closeSheet() {
