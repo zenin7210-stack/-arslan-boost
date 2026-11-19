@@ -1,4 +1,4 @@
-name: ARSLAN BOOST diagnose card loading without touching payments
+name: ARSLAN BOOST fix wallet options database failure
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -81,7 +81,9 @@ jobs:
           assert.ok(p2p.includes('await loadOptionsSafely()'));
           assert.ok(p2p.includes('network_timeout'));
           assert.ok(p2p.includes('showLoading(() => open(preferredMethod))'));
-          assert.ok(backend.includes("await expireInvoices(store, now(), env.P2P_MODE !== 'manual')"));
+          assert.ok(backend.includes('p2p_options_'));
+          assert.ok(backend.includes('Read-only request.'));
+          assert.ok(!backend.slice(backend.indexOf('if (path === "invoice/options"'),backend.indexOf('if (path === "invoice/quote"')).includes('await expireInvoices('));
           assert.match(p2p,/p2p-next-button/);
           assert.match(p2p,/id="p2p-cancel-yes"/);
           assert.match(p2p,/if \(invoice\.canCancel && invoice\.status === 'pending' && !invoice\.checkedAt\) renderCancel/);
