@@ -1,0 +1,38 @@
+name: Verify actual Mini App API routing (read-only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/inspect-live-api-route.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Compare live Mini App configuration with Cloudflare backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          curl --fail --silent --show-error --location --max-time 20 "$URL/config.js?v=20261110-uzcard" > /tmp/live_config.js
+          curl --fail --silent --show-error --location --max-time 20 "$URL/app.js?v=20261119-history" > /tmp/live_app.js
+          unzip -p ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip arslan-boost-cloudflare/public/config.js > /tmp/archive_config.js
+          node - <<'JS'
+          const fs=require('node:fs');
+          for(const f of ['/tmp/live_config.js','/tmp/archive_config.js']) {
+            const x=fs.readFileSync(f,'utf8');
+            console.log(f,'length',x.length,'API hosts',Array.from(x.matchAll(/https?:\/\/[^'"\s\)]+/g)).map(m=>{
+              try {return new URL(m[0]).host;}catch{return 'invalid-url';}
+            }));
+            console.log(f,'apiBaseUrl configured?',x.includes('apiBaseUrl'),'api route snippets',
+              x.split('\n').filter(y=>/apiBaseUrl|apiUrl|baseURL|backend|service/i.test(y)).map(y=>y.slice(0,180)).slice(0,8));
+          }
+          const live=fs.readFileSync('/tmp/live_config.js','utf8');
+          const code=fs.readFileSync('/tmp/live_app.js','utf8');
+          console.log('App route uses config.apiBaseUrl:',code.includes('config.apiBaseUrl'));
+          console.log('Live config size',live.length);
+          JS
