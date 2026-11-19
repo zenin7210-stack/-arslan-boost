@@ -23,7 +23,7 @@ jobs:
           URL=https://arslan-boost-bot.zenin7210.workers.dev
           curl --fail --silent --show-error --max-time 25 "$URL/" > /tmp/live_index.html
           curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.js?v=20261119-diagnostics" > /tmp/live_p2p.js
-          curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.css?v=20261119-diagnostics" > /tmp/live_p2p.css
+          curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.css?v=20261119-recover" > /tmp/live_p2p.css
           curl --fail --silent --show-error --max-time 25 "$URL/healthz" > /tmp/live_health.json
           code="$(curl -sS --max-time 20 -o /tmp/p2p_unauthorized -w '%{http_code}' \
             -H 'Content-Type: application/json' \
@@ -40,7 +40,7 @@ jobs:
           const health=JSON.parse(fs.readFileSync('/tmp/live_health.json','utf8'));
           const checks=[
             ['updated JS cache URL',index.includes('p2p.js?v=20261119-diagnostics')],
-            ['updated CSS cache URL',index.includes('p2p.css?v=20261119-diagnostics')],
+            ['updated CSS cache URL',index.includes('p2p.css?v=20261119-recover')],
             ['amount quote endpoint',js.includes("invoice/quote")],
             ['formatted 10 000 input',js.includes('const prettyAmount = value =>')],
             ['retry loading button',js.includes('id="p2p-load-retry"')],
