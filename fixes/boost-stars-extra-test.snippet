@@ -1,0 +1,50 @@
+
+test("direct BOOST Stars invoice pays the order exactly once and preserves wallet balance", async t => {
+  const calls=[];
+  t.mock.method(globalThis,"fetch",async (url,init)=>{
+    const method=url.split("/").at(-1),body=JSON.parse(init.body);
+    calls.push({method,body});
+    return Response.json({ok:true,result:method==="createInvoiceLink"?"https://t.me/$fixture":true});
+  });
+  const system=app();
+  const form={mode:"wing",fromIndex:0,toIndex:3,gameId:"12345678",paymentMethod:"stars",
+    acceptTerms:true,expectedAmount:13000,requestId:"boost-stars-direct-test-01"};
+  const before=(await system.api(1,"state")).data;
+  const first=await system.api(1,"checkout",form);
+  assert.equal(first.status,200);
+  assert.equal(first.data.amount,13000);
+  assert.equal(first.data.status,"pending");
+  const payment=first.data.payment;
+  assert.equal(payment.kind,"order");
+  assert.equal(payment.method,"stars");
+  assert.equal(payment.stars,82);
+  assert.equal(payment.status,"pending");
+  assert.equal(payment.invoiceLink,"https://t.me/$fixture");
+  assert.equal(payment.orderId,first.data.id);
+  const replay=await system.api(1,"checkout",form);
+  assert.equal(replay.status,200);
+  assert.equal(replay.data.id,first.data.id);
+  assert.equal(replay.data.payment.id,payment.id);
+  const unpaid=(await system.api(1,"state")).data;
+  assert.equal(unpaid.balance,before.balance);
+  assert.equal(unpaid.starsBalance,before.starsBalance);
+  assert.equal(unpaid.orders[0].status,"pending");
+  assert.equal((await system.api(2,"payment/status",{paymentId:payment.id})).status,404);
+  const valid={from:{id:1},currency:"XTR",invoice_payload:"ab:"+payment.id,total_amount:payment.stars};
+  await system.webhook({pre_checkout_query:{...valid,id:"boost-stars-checkout"}});
+  assert.equal(calls.at(-1).body.ok,true);
+  const settled={from:{id:1},chat:{type:"private"},successful_payment:{
+    ...valid,telegram_payment_charge_id:"boost-stars-charge-once"}};
+  await system.webhook({message:settled});
+  await system.webhook({message:settled});
+  await system.drain();
+  const after=(await system.api(1,"state")).data;
+  assert.equal(after.orders[0].status,"paid");
+  assert.equal(after.payments.find(x=>x.id===payment.id).status,"paid");
+  assert.equal(after.balance,before.balance);
+  assert.equal(after.starsBalance,before.starsBalance);
+  assert.equal(system.db.prepare("SELECT COUNT(*) AS n FROM payments WHERE kind='order' AND method='stars'").get().n,1);
+  const again=await system.api(1,"checkout",form);
+  assert.equal(again.data.id,first.data.id);
+  assert.equal(again.data.status,"paid");
+});
