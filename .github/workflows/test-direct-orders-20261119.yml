@@ -1,4 +1,4 @@
-name: Reproduce 11990 Gold RINOK checkout failure from user's iPhone
+name: Verify abandoned Stars cleanup unblocks UZCARD and preserves paid charges
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
