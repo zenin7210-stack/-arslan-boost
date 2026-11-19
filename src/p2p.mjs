@@ -303,6 +303,14 @@ async function cancelUnpaidInvoice(store, env, userId, invoiceId) {
 
 export async function p2pApi(request, env, store, user, data, path, enqueueReview = () => {}) {
   requireAccess(env, user.id);
+  if (path === "invoice/recover" && request.method === "POST") {
+    // Emergency read-only recovery works even when options/quote fails.
+    // Never mark money paid or cancel an invoice automatically.
+    const current = await store.first(`
+      SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?
+      ORDER BY id DESC LIMIT 1`, user.id, now());
+    return { active: current ? publicInvoice(env, current) : null };
+  }
   if (path === "invoice/options" && request.method === "POST") {
     // Read-only request. A simple screen load must never depend on the
     // expiry/settlement UPDATE batch, whose failure must not block the wallet.
@@ -313,7 +321,9 @@ export async function p2pApi(request, env, store, user, data, path, enqueueRevie
       const current = await store.first(`
         SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?`,
         user.id, at);
-      const active = current?.order_payment_id ? null : current;
+      // An unpaid BOOST/DONAT bank invoice may also block wallet top-ups.
+      // Show it so its owner can cancel it explicitly before sending money.
+      const active = current;
       phase = "latest";
       const latest = active ?? await store.first(`
         SELECT * FROM invoices WHERE user_id = ? AND order_payment_id IS NULL
