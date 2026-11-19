@@ -5,6 +5,9 @@ on:
     paths: [.github/workflows/verify-stars-v3.yml]
 permissions:
   contents: read
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -70,3 +73,78 @@ jobs:
           assert.match(schema, /CREATE TRIGGER IF NOT EXISTS settle_stars_payment/);
           assert.match(schema, /WHERE NEW.kind = 'order'/);
           JS
+      - name: Save verified release package for deployment
+        uses: actions/upload-artifact@v4
+        with:
+          name: boost-stars-v3-tested
+          path: release/arslan-boost-cloudflare
+          if-no-files-found: error
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: boost-stars-v3-tested
+          path: release/arslan-boost-cloudflare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate production target and current D1 schema (read-only)
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN is missing'; exit 1; }
+          node - <<'JS'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('wrangler.production.jsonc','utf8'));
+          if(c.name!=='arslan-boost-bot' || c.d1_databases?.[0]?.database_name!=='arslan-boost-payments')
+            throw Error('Unexpected Cloudflare Worker or D1 target');
+          if(c.vars?.ENABLE_PAYMENTS!=='1'||c.vars?.BOT_USERNAME!=='arslanboostbot')
+            throw Error('Unexpected production bot/payment settings');
+          if(Object.prototype.hasOwnProperty.call(c.vars||{},'P2P_MODE'))
+            throw Error('P2P_MODE must remain a private production setting');
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id' > /tmp/stars_v3_ledger.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('orders','payments','accounts','settle_stars_payment','p2p_paid_requires_bank_event','arslan_one_active_boost')" > /tmp/stars_v3_schema.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          function rows(p){const j=JSON.parse(fs.readFileSync(p,'utf8'));return (Array.isArray(j)?j:[j]).flatMap(x=>x.results||[]);}
+          const migrations=rows('/tmp/stars_v3_ledger.json').map(x=>x.name);
+          const expected=[
+            '0001_checkout.sql','0002_p2p.sql','0003_partners.sql','0004_telegram_entry.sql',
+            '0005_checkout_webhook.sql','0006_exact_transfer_amount.sql','0007_miniapp_receipt_upload.sql',
+            '0008_transfer_orders.sql','0009_bank_confirmation.sql','0010_manual_approval.sql',
+            '0011_safe_order_flow.sql'
+          ];
+          if(JSON.stringify(migrations)!==JSON.stringify(expected))
+            throw Error('Unexpected D1 migration ledger: refusing deployment');
+          const found=new Set(rows('/tmp/stars_v3_schema.json').map(x=>x.name));
+          for(const k of ['orders','payments','accounts','settle_stars_payment','p2p_paid_requires_bank_event','arslan_one_active_boost'])
+            if(!found.has(k))throw Error('Missing D1 schema object: '+k);
+          console.log('D1 unchanged; existing Stars settlement trigger and P2P protection verified');
+          JS
+      - name: Record D1 recovery bookmark without altering data
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments --config wrangler.production.jsonc
+      - name: Deploy tested BOOST Stars Worker and Mini App only
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo '::notice::BOOST Stars checkout updated. Existing balance, DONAT prices and P2P_MODE preserved.'
