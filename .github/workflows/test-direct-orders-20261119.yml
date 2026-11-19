@@ -1,4 +1,4 @@
-name: ARSLAN BOOST direct-order checkout regression (staging)
+name: Verify direct checkout payments after retiring legacy wallet tests
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
