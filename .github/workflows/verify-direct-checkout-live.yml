@@ -1,4 +1,4 @@
-name: Verify live Stars separation, 0013 bank UI and keyboard fixes
+name: Verify live bot after unpaid Stars checkout recovery rollout
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
