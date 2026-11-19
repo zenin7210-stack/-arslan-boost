@@ -1,4 +1,4 @@
-name: Recheck multi-order constraints and bank event idempotency
+name: Validate JSON1 allocator against all payment and bank settlement tests
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
