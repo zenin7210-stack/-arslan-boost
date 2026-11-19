@@ -115,3 +115,51 @@ test('Gold through market 100 checkout at 11990 creates actual linked card invoi
   assert.ok(invoice.unique_amount>=11990);
   assert.equal((await system.api(1,'invoice/'+invoice.id+'/status',null,'GET')).data.status,'pending');
 });
+
+test('old unstarted DONAT Stars checkout no longer blocks fresh UZCARD order',async()=>{
+  const system=app();
+  const date=new Date().toISOString();
+  const old=system.db.prepare(`INSERT INTO donat_orders
+    (user_id,username,product,option_code,option_label,detail,amount,method,lang,status,request_key,created_at)
+    VALUES (1,'tester','spin_coins','100','100 Spin Coins','123456',21990,'stars','uz','pending','old-donat-stars-unpaid',?) RETURNING id`).get(date);
+  const payment=system.db.prepare(`INSERT INTO payments
+    (user_id,donat_order_id,kind,method,amount,stars,status,request_key,created_at)
+    VALUES (1,?,'donat','stars',21990,138,'pending','old-unstarted-stars',?) RETURNING id`).get(old.id,date);
+  assert.equal(system.db.prepare('SELECT checkout_query_id FROM payments WHERE id=?').get(payment.id).checkout_query_id,null);
+  const result=await system.api(1,'donat/create',{
+    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
+    paymentMethod:'uzcard',requestId:'gold-after-old-stars-cancel'
+  });
+  assert.equal(result.status,200,JSON.stringify(result.data));
+  assert.equal(result.data.amount,11990);
+  assert.ok(result.data.invoiceId);
+  assert.equal(system.db.prepare('SELECT status FROM payments WHERE id=?').get(payment.id).status,'cancelled');
+  assert.equal(system.db.prepare('SELECT status FROM donat_orders WHERE id=?').get(old.id).status,'cancelled');
+  assert.equal(system.db.prepare('SELECT status FROM donat_orders WHERE id=?').get(result.data.id).status,'pending');
+});
+test('prechecked Stars payment is never cancelled, and invalid new order does not clear old Stars',async()=>{
+  const system=app();
+  const date=new Date().toISOString();
+  const old=system.db.prepare(`INSERT INTO donat_orders
+    (user_id,username,product,option_code,option_label,detail,amount,method,lang,status,request_key,created_at)
+    VALUES (1,'tester','spin_coins','100','100 Spin Coins','123456',21990,'stars','uz','pending','prechecked-stars-kept',?) RETURNING id`).get(date);
+  const payment=system.db.prepare(`INSERT INTO payments
+    (user_id,donat_order_id,kind,method,amount,stars,status,request_key,created_at,checkout_query_id,checkout_reserved_at)
+    VALUES (1,?,'donat','stars',21990,138,'pending','prechecked-stars-payment',?,'tg-checkout-already-started',?) RETURNING id`).get(old.id,date,Math.floor(Date.now()/1000));
+  const blocked=await system.api(1,'donat/create',{
+    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
+    paymentMethod:'uzcard',requestId:'gold-should-remain-blocked'
+  });
+  assert.equal(blocked.status,409);
+  assert.equal(system.db.prepare('SELECT status FROM payments WHERE id=?').get(payment.id).status,'pending');
+  assert.equal(system.db.prepare('SELECT status FROM donat_orders WHERE id=?').get(old.id).status,'pending');
+
+  // With no pre-checkout, invalid product or price cannot cancel an existing order.
+  system.db.prepare('UPDATE payments SET checkout_query_id=NULL,checkout_reserved_at=NULL WHERE id=?').run(payment.id);
+  const invalid=await system.api(1,'donat/create',{
+    product:'gold_rinok',quantity:100,detail:'',expectedAmount:10000,
+    paymentMethod:'uzcard',requestId:'gold-invalid-price-no-cancel'
+  });
+  assert.equal(invalid.status,409);
+  assert.equal(system.db.prepare('SELECT status FROM payments WHERE id=?').get(payment.id).status,'pending');
+});
