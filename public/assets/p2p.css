@@ -151,3 +151,8 @@
 .sheet.p2p-sheet #p2p-cancel-yes{min-height:54px;font-size:15px;background:linear-gradient(106deg,#02bdf5,#1976fa 55%,#9433ed);border-radius:17px}
 .sheet.p2p-sheet #p2p-cancel-back{min-height:49px}
 @media(max-width:350px){.sheet.p2p-sheet .p2p-quote-banner strong{font-size:21px}.sheet.p2p-sheet .p2p-quote-badge{font-size:9px;padding:6px}.sheet.p2p-sheet .p2p-input-tag{font-size:10px}.sheet.p2p-sheet .p2p-method-info span{font-size:10px}}
+
+/* Recovery state for interrupted card invoice loading. */
+.sheet.p2p-sheet #p2p-load-retry[hidden]{display:none}
+.sheet.p2p-sheet #p2p-load-retry:not([hidden]){margin-top:4px}
+.sheet.p2p-sheet #p2p-value{font-variant-numeric:tabular-nums;letter-spacing:.025em}
