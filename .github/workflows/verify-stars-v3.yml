@@ -1,0 +1,70 @@
+name: Verify BOOST Stars checkout against locked production v3
+on:
+  push:
+    branches: [fix/boost-stars-2026-11-19]
+    paths: [.github/workflows/verify-stars-v3.yml]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify immutable approved v3 archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -t "$ZIP" >/dev/null
+          unzip -q "$ZIP" -d release
+          cd release/arslan-boost-cloudflare
+          sha256sum public/app.css public/assets/donat/catalog.json wrangler.production.jsonc > /tmp/immutable-ui-and-config.sha
+      - name: Load staged BOOST-only sources (no CSS, catalog, price, secrets or DB edits)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin staging-boost-v3-source-20261119
+          for name in app.js worker.mjs store.mjs approved-ui.test.mjs; do
+            case "$name" in
+              app.js) target=public/app.js ;;
+              worker.mjs) target=src/worker.mjs ;;
+              store.mjs) target=src/store.mjs ;;
+              approved-ui.test.mjs) target=tests/approved-ui.test.mjs ;;
+            esac
+            git show "FETCH_HEAD:extracted/$name" > "release/arslan-boost-cloudflare/$target"
+          done
+          cd release/arslan-boost-cloudflare
+          sha256sum -c /tmp/immutable-ui-and-config.sha
+          test -f migrations/0011_safe_order_flow.sql
+          find src public -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+      - name: Run full existing test suite plus Stars order invariants
+        working-directory: release/arslan-boost-cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const app=fs.readFileSync('public/app.js','utf8');
+          const server=fs.readFileSync('src/worker.mjs','utf8');
+          const store=fs.readFileSync('src/store.mjs','utf8');
+          const schema=fs.readFileSync('migrations/0001_checkout.sql','utf8');
+          assert.match(app, /\['uzcard','humo','stars'\]/);
+          assert.match(app, /paymentMethod:'stars',acceptTerms:true/);
+          assert.match(app, /showStarsPayment\(\{kind:'order'/);
+          assert.match(server, /const byStars = kind === "order" && data.paymentMethod === "stars"/);
+          assert.match(server, /if \(byStars\) requireStars\(data, config.topupRate\)/);
+          assert.match(server, /if \(byStars\) result.payment = await paymentDetails/);
+          assert.match(store, /kind IN \('topup','order'\) AND method = 'stars'/);
+          assert.match(store, /const stars = method === "stars"/);
+          assert.match(schema, /CREATE TRIGGER IF NOT EXISTS settle_stars_payment/);
+          assert.match(schema, /WHERE NEW.kind = 'order'/);
+          JS
