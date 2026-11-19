@@ -40,12 +40,15 @@ jobs:
               FROM invoices WHERE status = 'pending'" > /tmp/stale.json
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
             --command "SELECT COUNT(*) AS linked, COUNT(DISTINCT invoice_id) AS unique_links FROM p2p_incoming" > /tmp/bank.json
-          npx --yes wrangler@4 secret list --config wrangler.production.jsonc --json > /tmp/secret_names.json
+          npx --yes wrangler@4 secret list --config wrangler.production.jsonc > /tmp/secret_names.json
           node - <<'JS'
           const fs=require('node:fs');
           const entries=p=>{const x=JSON.parse(fs.readFileSync(p,'utf8'));return (Array.isArray(x)?x:[x]).flatMap(v=>v.results||[])};
           for(const file of ['/tmp/states.json','/tmp/stale.json','/tmp/bank.json']) console.log(file,JSON.stringify(entries(file)));
-          const names=new Set(JSON.parse(fs.readFileSync('/tmp/secret_names.json','utf8')).map(x=>x.name));
+          const raw=fs.readFileSync('/tmp/secret_names.json','utf8');
+          let names=new Set();
+          try { names=new Set(JSON.parse(raw).map(x=>x.name)); }
+          catch { for (const line of raw.split('\n')) {const name=line.match(/\b[A-Z][A-Z0-9_]{3,}\b/);if(name)names.add(name[0]);} }
           for(const key of ['P2P_MODE','P2P_CARDS','P2P_USERS','ADMIN_ID','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'])
             console.log('Secret configured:',key,names.has(key));
           JS
