@@ -531,7 +531,7 @@
     shop.applyLanguage();
     const banner=config.banners?.[state.lang];if(banner){try{const url=new URL(banner,document.baseURI);if(['https:','http:'].includes(url.protocol))$('.hero').style.backgroundImage=`url(${JSON.stringify(url.href)})`;}catch{}}
     all('[data-mode]').forEach(button=>button.textContent=t(button.dataset.mode));$('#mode-label').textContent=t('selectedMode')+': '+t(state.mode);
-    $('#quick-balance')?.textContent=sum(state.balance);$('#setting-balance')?.textContent=sum(state.balance);updatePrice();renderHistory();
+    if($('#quick-balance'))$('#quick-balance').textContent=sum(state.balance);if($('#setting-balance'))$('#setting-balance').textContent=sum(state.balance);updatePrice();renderHistory();
     const sheet=state.sheet;
     if(sheet?.startsWith('rank:'))openRanks(sheet.split(':')[1]);
     else if(sheet==='checkout')renderPayments();
@@ -903,8 +903,8 @@
         gameId.value = boostData.gameId;
         updatePrice();
       }
-      $('#quick-balance')?.textContent = sum(state.balance);
-      $('#setting-balance')?.textContent = sum(state.balance);
+      if($('#quick-balance'))$('#quick-balance').textContent = sum(state.balance);
+      if($('#setting-balance'))$('#setting-balance').textContent = sum(state.balance);
       const topupBalance=$('#topup-balance');
       if(topupBalance)topupBalance.textContent=sum(state.balance);
       if (previousCards !== [state.p2pVisible, state.p2pAdmin, ...state.p2pMethods].join(',')) {
