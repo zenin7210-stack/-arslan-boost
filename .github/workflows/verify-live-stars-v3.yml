@@ -20,18 +20,22 @@ jobs:
           URL=https://arslan-boost-bot.zenin7210.workers.dev
           curl --fail --silent --show-error --location --max-time 25 "$URL/api/config" > /tmp/boost_live_config.json
           curl --fail --silent --show-error --location --max-time 25 "$URL/app.js" > /tmp/boost_live_app.js
+          curl --fail --silent --show-error --location --max-time 25 "$URL/assets/p2p.js" > /tmp/boost_live_p2p.js
           curl --fail --silent --show-error --location --max-time 25 "$URL/healthz" > /tmp/boost_health.json
           node - <<'JS'
           const fs=require('node:fs');
           const c=JSON.parse(fs.readFileSync('/tmp/boost_live_config.json','utf8'));
           const h=JSON.parse(fs.readFileSync('/tmp/boost_health.json','utf8'));
           const app=fs.readFileSync('/tmp/boost_live_app.js','utf8');
+          const p2p=fs.readFileSync('/tmp/boost_live_p2p.js','utf8');
           if(c.arslanBoostApi!==true)throw Error('Production config is not ARSLAN BOOST API');
           if(!app.includes("['uzcard','humo','stars']"))throw Error('Live BOOST payment tiles not updated');
           if(!app.includes("paymentMethod:'stars',acceptTerms:true"))throw Error('Live BOOST Stars checkout not deployed');
+          if(!p2p.includes('const queueInvoicePoll = () =>'))throw Error('Live card invoice status auto-refresh not deployed');
+          if(!p2p.includes('invoice.verificationMode === \'automatic\''))throw Error('Live bank-checking status labels are missing');
           if(!(Number.isInteger(c.orderStarsRate)&&c.orderStarsRate>0))throw Error('Stars order rate disabled in production');
           if(!(Number.isInteger(c.orderStarsMax)&&c.orderStarsMax>0))throw Error('Stars order max missing in production');
           if(h.paymentsEnabled!==true)throw Error('Telegram Stars backend not enabled or webhook not registered');
-          console.log('PASS: production API and frontend updated; Telegram Stars configured and backend enabled');
+          console.log('PASS: live BOOST Stars and P2P automatic status polling deployed, payment backend configured');
           console.log('Stars order rate configured:', c.orderStarsRate);
           JS
