@@ -1,4 +1,4 @@
-name: Diagnose production SQL without writing invoices
+name: Verify new D1 JSON1 amount allocator SQL compiles on production schema
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -35,7 +35,7 @@ jobs:
           SQL
           cat >/tmp/sql2.sql <<'SQL'
           EXPLAIN QUERY PLAN WITH candidate AS (
-          SELECT (11990 + steps.bump) AS exact_amount, available.card_id,
+          SELECT (11990 + steps.value) AS exact_amount, available.card_id,
             json_extract(available.metadata, '$.last4') AS last4,
             json_extract(available.metadata, '$.holder') AS holder
           FROM (
@@ -44,15 +44,12 @@ jobs:
             FROM json_each('{"TESTCARD":{"last4":"0000","holder":"TEST","enabled":1}}') AS config
             LEFT JOIN p2p_card_flags flag ON flag.card_id = config.key
             WHERE COALESCE(flag.enabled, json_extract(config.value, '$.enabled')) = 1
-          ) AS available CROSS JOIN (SELECT 0 AS bump UNION ALL SELECT 100 AS bump UNION ALL SELECT 200 AS bump
-            UNION ALL SELECT 300 AS bump UNION ALL SELECT 400 AS bump UNION ALL SELECT 500 AS bump
-            UNION ALL SELECT 600 AS bump UNION ALL SELECT 700 AS bump UNION ALL SELECT 800 AS bump
-            UNION ALL SELECT 900 AS bump) AS steps
-          WHERE 11990 + steps.bump <= 10000000
-            AND NOT EXISTS(SELECT 1 FROM invoices WHERE unique_amount = 11990 + steps.bump AND status = 'pending')
-            AND NOT EXISTS(SELECT 1 FROM invoices WHERE card_id = available.card_id AND unique_amount = 11990 + steps.bump
+          ) AS available CROSS JOIN json_each('[0,100,200,300,400,500,600,700,800,900]') AS steps
+          WHERE 11990 + steps.value <= 10000000
+            AND NOT EXISTS(SELECT 1 FROM invoices WHERE unique_amount = 11990 + steps.value AND status = 'pending')
+            AND NOT EXISTS(SELECT 1 FROM invoices WHERE card_id = available.card_id AND unique_amount = 11990 + steps.value
               AND (expires_at > 1795110000 OR (status <> 'paid' AND created_at >= 1795100000)))
-          ORDER BY steps.bump ASC, available.last_used ASC, available.card_id ASC LIMIT 1
+          ORDER BY steps.value ASC, available.last_used ASC, available.card_id ASC LIMIT 1
           )
           INSERT INTO invoices (
             user_id, request_id, base_amount, unique_amount, requested_amount, payment_method, card_id,
