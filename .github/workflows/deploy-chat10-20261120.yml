@@ -140,9 +140,9 @@ jobs:
             curl -fsSL --retry 2 --max-time 20 "$URL/$file?v=preflight-20261120" -o "/tmp/arslan-before-$(basename "$file")"
           done
           printf '%s  %s\n' \
-            '8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44' /tmp/arslan-before-index.html \
+            '9863853bd19cab3be973a8d0df4c37eb72f22fba3d3c140a15d42acca7c33c65' /tmp/arslan-before-index.html \
             'b66976de7e620f1682b774607e11a682458c8b0ebf824bf198866a6829dd88f6' /tmp/arslan-before-app.js \
-            'f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768' /tmp/arslan-before-p2p.js | sha256sum -c -
+            'f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058' /tmp/arslan-before-p2p.js | sha256sum -c -
           code="$(curl -sS --max-time 20 -o /tmp/arslan-auth -w '%{http_code}' \
             -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
           if [[ "$code" != 401 && "$code" != 403 && "$code" != 404 ]]; then
@@ -184,18 +184,18 @@ jobs:
           const fs=require('node:fs');
           const r=f=>(j=>Array.isArray(j)?j.flatMap(x=>x.results||[]):j.results||[])(JSON.parse(fs.readFileSync(f)));
           const ledger=r('/tmp/arslan-ledger-before.json').map(x=>x.name);
-          if(ledger.length!==14||ledger[13]!=='0014_multiple_orders.sql')
+          if(ledger.length!==15||ledger[14]!=='0015_concurrent_exact_amounts.sql')
             throw Error('Unknown D1 migration baseline, refusing change');
           const names=new Set(r('/tmp/arslan-schema-before.json').map(x=>x.name));
-          for(const name of ['p2p_unique_pending','p2p_one_open_invoice','p2p_one_invoice_per_order',
+          for(const name of ['p2p_pending_card_amount','p2p_one_open_invoice','p2p_one_invoice_per_order',
               'p2p_paid_requires_bank_event','p2p_settle_on_paid'])
             if(!names.has(name))throw Error('Missing bank safety schema '+name);
-          if(names.has('support_messages')||names.has('p2p_pending_card_amount'))
+          if(names.has('support_messages')||names.has('p2p_unique_pending'))
             throw Error('Unexpected partial migration, refusing deployment');
-          console.log('PASS: D1 migration baseline and safeguards exactly as expected');
+          console.log('PASS: existing D1 migration 0015 and payment safeguards verified; only chat 0016 pending');
           JS
 
-      - name: Record D1 Time Travel recovery bookmark before mutation
+      - name: Record D1 Time Travel recovery bookmark before chat migration
         shell: bash
         working-directory: release
         env:
@@ -207,7 +207,7 @@ jobs:
           test -s /tmp/arslan-d1-recovery-before-migration.txt
           echo '::notice::D1 Time Travel recovery bookmark saved above; do not erase this run log.'
 
-      - name: Apply only migrations 0015 and 0016 (existing user rows retained)
+      - name: Apply only new migration 0016 (0015 already installed, existing user rows retained)
         shell: bash
         working-directory: release
         env:
@@ -216,7 +216,7 @@ jobs:
           set -euo pipefail
           npx --yes wrangler@4 d1 migrations apply arslan-boost-payments --remote \
             --config wrangler.production.jsonc
-          echo 'D1 migration 0015 and support messages table 0016 applied'
+          echo 'Existing D1 0015 preserved; chat support migration 0016 applied'
 
       - name: Verify migrated schema and no loss of existing row counts
         shell: bash
@@ -246,7 +246,7 @@ jobs:
           if(!before||!after)throw Error('Could not compare row counts');
           for(const n of ['boost_orders','donat_orders','payments','accounts'])
             if(after[n]<before[n])throw Error('Unexpected decrease in '+n+'; stop before deploying');
-          console.log('PASS: both migrations and payment safeguards verified, existing rows retained');
+          console.log('PASS: previous 0015 and new chat 0016 verified, existing rows retained');
           JS
 
       - name: Deploy exactly tested Worker and Mini App, preserve payment secrets
