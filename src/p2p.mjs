@@ -144,11 +144,12 @@ async function invoiceState(store, env, row) {
   return { ...invoice, balance: account?.p2p_balance ?? 0 };
 }
 
-// Each reserved transfer keeps a unique amount. We only raise wallet top-ups;
-// an order's exact price always stays unchanged. Never allocate an underpayment.
+// Each reserved transfer has an exact, collision-free amount. For a busy
+// bank transfer amount, try +100, +200, ... instead of rejecting the order.
+// Never try a smaller amount: that would underpay the advertised order price.
 const TRANSFER_STEPS = [0,100,200,300,400,500,600,700,800,900];
 function transferAmountQuery(cardsForMethod, amount, time, order) {
-  const deltaSql = (order ? [0] : TRANSFER_STEPS)
+  const deltaSql = TRANSFER_STEPS
     .map((step,i) => (i?'UNION ALL ':'')+'SELECT '+step+' AS bump').join(' ');
   const cardJson = JSON.stringify(Object.fromEntries(cardsForMethod.map(card=>[card.id,{
     last4:card.number.slice(-4), holder:card.holder, enabled:Number(card.enabled)
