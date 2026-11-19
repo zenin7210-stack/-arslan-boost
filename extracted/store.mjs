@@ -149,14 +149,14 @@ export class Store {
       return { order: saved, payment, invoice };
     }
     checkOrderQuote(data, info.amount);
-    // Starting a different valid order abandons old unstarted Stars invoices
-    // that otherwise permanently block the one-active-order constraint.
-    await this.cancelUnstartedStarsBeforeNewOrder(user.id);
     const stars = method === "stars" ? Math.ceil(info.amount / starsRate) : 0;
     if (method === "stars" && (!Number.isSafeInteger(starsRate) ||
         starsRate <= 0 || !Number.isSafeInteger(stars) || stars < 1 || stars > MAX_STARS)) {
       throw new RequestError("stars_not_configured", 503);
     }
+    // A validated new order abandons a legacy Stars attempt only if Telegram
+    // never started pre-checkout. Paid or in-flight charges are preserved.
+    await this.cancelUnstartedStarsBeforeNewOrder(user.id);
     const lang = data.lang === "ru" ? "ru" : "uz";
     const status = method === "balance" ? "paid" : "pending";
     const created = utc();
