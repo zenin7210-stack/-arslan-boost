@@ -159,11 +159,13 @@ async function paymentDetails(env, payment, { invoice = false, lang = "uz" } = {
     method: payment.method, status: payment.status, orderId: payment.order_id ?? payment.donat_order_id,
     processing: processing(payment),
   };
-  if (!invoice || !["topup","order"].includes(payment.kind) || payment.method !== "stars" || result.status !== "pending" || result.processing) return result;
+  if (!invoice || !["topup","order","donat"].includes(payment.kind) || payment.method !== "stars" || result.status !== "pending" || result.processing) return result;
   result.invoiceLink = await telegram(env, "createInvoiceLink", {
     title: "ARSLAN BOOST", description: payment.kind === "order"
       ? langText(lang, "Оплата заказа BOOST", "BOOST buyurtmasi uchun to‘lov")
-      : langText(lang, "Пополнение баланса", "Balansni to‘ldirish"),
+      : payment.kind === "donat"
+        ? langText(lang, "Оплата заказа DONAT SHOP", "DONAT SHOP buyurtmasi uchun to‘lov")
+        : langText(lang, "Пополнение баланса", "Balansni to‘ldirish"),
     payload: "ab:" + payment.id, provider_token: "", currency: "XTR",
     prices: [{ label: langText(lang, "Сумма", "Summa"), amount: payment.stars }],
   });
@@ -233,11 +235,10 @@ async function handleApi(request, env, ctx, store, config, path) {
       return json({ orders: await store.donatState(user.id) });
     case "profile":
       return json(await store.profile(user.id, data));
-    case "topup": {
-      requireStars(data, config.topupRate);
-      const payment = await store.createTopup(user.id, data, config.topupRate);
-      return json(await paymentDetails(env, payment, { invoice: true, lang: data.lang }));
-    }
+    case "topup":
+      // New wallet credits are disabled; previously purchased balances and
+      // historical top-ups remain intact for reconciliation and support.
+      throw new RequestError("topup_disabled", 409);
     case "payment/status": {
       const payment = await store.userPayment(integer(data.paymentId), user.id);
       return json(await paymentDetails(env, payment, {
@@ -248,10 +249,10 @@ async function handleApi(request, env, ctx, store, config, path) {
     case "donat/create": {
       const kind = path === "checkout" ? "order" : "donat";
       const byCard = data.paymentMethod === "uzcard" || data.paymentMethod === "humo";
-      const byStars = kind === "order" && data.paymentMethod === "stars";
-      if (!byCard && !byStars && data.paymentMethod !== "balance") throw new RequestError("invalid_payment_method");
+      const byStars = data.paymentMethod === "stars";
+      if (!byCard && !byStars) throw new RequestError("invalid_payment_method");
       if (byStars) requireStars(data, config.topupRate);
-      if (!byCard && !config.enabled) throw new RequestError("stars_not_configured", 503);
+      if (byStars && !config.enabled) throw new RequestError("stars_not_configured", 503);
       const { order, payment, invoice } = byCard ? await createP2pOrder(store, env, user, kind, data)
         : await store.createOrder(kind, user, data, undefined, byStars ? config.topupRate : 0);
       const result = { id: order.id, amount: order.amount, status: order.status };
@@ -400,10 +401,7 @@ async function handleCommand(env, store, config, message) {
         : langText(lang, "Добро пожаловать в ARSLAN BOOST!", "ARSLAN BOOST’ga xush kelibsiz!");
       const inline_keyboard = [[{ text: langText(lang, "🚀 Открыть Mini App", "🚀 Mini App’ni ochish"),
         web_app: { url } }]];
-      if (p2pVisible(env, message.from.id)) {
-        inline_keyboard.push([{ text: "UZCARD / HUMO", web_app: { url: miniAppSection(url, "wallet") } }]);
-      }
-      return say(greeting + (config.test ? "\n\n🧪 ID: " + message.from.id : ""), {
+            return say(greeting + (config.test ? "\n\n🧪 ID: " + message.from.id : ""), {
         reply_markup: { inline_keyboard },
       });
     }
