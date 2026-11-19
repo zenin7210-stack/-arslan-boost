@@ -149,13 +149,15 @@ async function invoiceState(store, env, row) {
 // Never try a smaller amount: that would underpay the advertised order price.
 const TRANSFER_STEPS = [0,100,200,300,400,500,600,700,800,900];
 function transferAmountQuery(cardsForMethod, amount, time, order) {
-  const deltaSql = TRANSFER_STEPS
-    .map((step,i) => (i?'UNION ALL ':'')+'SELECT '+step+' AS bump').join(' ');
+  // D1 has a stricter compound-SELECT limit than local SQLite. A series of
+  // UNION ALL statements throws SQLITE_ERROR in production; JSON1 uses one
+  // virtual table and preserves the same ordered candidate amounts.
+  const deltaSql = `json_each('${JSON.stringify(TRANSFER_STEPS)}')`;
   const cardJson = JSON.stringify(Object.fromEntries(cardsForMethod.map(card=>[card.id,{
     last4:card.number.slice(-4), holder:card.holder, enabled:Number(card.enabled)
   }])));
   return {
-    sql:`SELECT (? + steps.bump) AS exact_amount, available.card_id,
+    sql:`SELECT (? + steps.value) AS exact_amount, available.card_id,
       json_extract(available.metadata, '$.last4') AS last4,
       json_extract(available.metadata, '$.holder') AS holder
       FROM (
@@ -164,14 +166,14 @@ function transferAmountQuery(cardsForMethod, amount, time, order) {
         FROM json_each(?) AS config
         LEFT JOIN p2p_card_flags flag ON flag.card_id = config.key
         WHERE COALESCE(flag.enabled, json_extract(config.value, '$.enabled')) = 1
-      ) AS available CROSS JOIN (${deltaSql}) AS steps
-      WHERE ? + steps.bump <= ?
+      ) AS available CROSS JOIN ${deltaSql} AS steps
+      WHERE ? + steps.value <= ?
         AND NOT EXISTS(SELECT 1 FROM invoices
-          WHERE unique_amount = ? + steps.bump AND status = 'pending')
+          WHERE unique_amount = ? + steps.value AND status = 'pending')
         AND NOT EXISTS(SELECT 1 FROM invoices
-          WHERE card_id = available.card_id AND unique_amount = ? + steps.bump
+          WHERE card_id = available.card_id AND unique_amount = ? + steps.value
           AND (expires_at > ? OR (status <> 'paid' AND created_at >= ?)))
-      ORDER BY steps.bump ASC, available.last_used ASC, available.card_id ASC LIMIT 1`,
+      ORDER BY steps.value ASC, available.last_used ASC, available.card_id ASC LIMIT 1`,
     params: [amount, cardJson, amount, MAX_AMOUNT, amount, amount, time, time - HOLD_SECONDS]
   };
 }
