@@ -1,0 +1,84 @@
+name: Verify agreed P2P exact sums and cancel UX (staging only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/test-unique-card-payments.yml]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify locked source and unpack locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -q "$ZIP" -d release
+      - name: Merge only approved checkout and history sources, no secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin update/arslan-boost-next-20261119
+          for name in app.js worker.mjs store.mjs approved-ui.test.mjs p2p.js; do
+            case "$name" in
+              app.js) target=public/app.js ;;
+              worker.mjs) target=src/worker.mjs ;;
+              store.mjs) target=src/store.mjs ;;
+              approved-ui.test.mjs) target=tests/approved-ui.test.mjs ;;
+              p2p.js) target=public/assets/p2p.js ;;
+            esac
+            git show "FETCH_HEAD:extracted/$name" > "release/arslan-boost-cloudflare/$target"
+          done
+          for name in index.html app.css; do
+            git show "FETCH_HEAD:public/$name" > "release/arslan-boost-cloudflare/public/$name"
+          done
+          git show 'FETCH_HEAD:public/assets/p2p.css' > release/arslan-boost-cloudflare/public/assets/p2p.css
+          git show 'FETCH_HEAD:src/p2p.mjs' > release/arslan-boost-cloudflare/src/p2p.mjs
+          git show 'FETCH_HEAD:migrations/0012_requested_card_topup.sql' > release/arslan-boost-cloudflare/migrations/0012_requested_card_topup.sql
+          git show 'FETCH_HEAD:tests/history-ui.test.mjs' > release/arslan-boost-cloudflare/tests/history-ui.test.mjs
+          git show 'FETCH_HEAD:fixes/adjust-legacy-p2p-tests.mjs' > /tmp/adjust-p2p-tests.mjs
+          git show 'FETCH_HEAD:fixes/p2p-exact-amount-tests.snippet' > /tmp/p2p-amount-extra.snippet
+          git fetch --no-tags --depth=1 origin fix/boost-stars-2026-11-19
+          git show 'FETCH_HEAD:fixes/adapt-boost-stars-legacy-tests.mjs' > /tmp/adapt-stars-tests.mjs
+          git show 'FETCH_HEAD:fixes/boost-stars-extra-test.snippet' > /tmp/stars-extra.snippet
+          git show 'FETCH_HEAD:fixes/p2p-ui-auto-refresh.test.mjs' > release/arslan-boost-cloudflare/tests/p2p-ui-auto-refresh.test.mjs
+          cd release/arslan-boost-cloudflare
+          find src public -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+      - name: Test full suite plus concurrent unique amounts and cancel flow
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        run: |
+          set -euo pipefail
+          node /tmp/adapt-stars-tests.mjs tests/p2p.test.mjs
+          node /tmp/adjust-p2p-tests.mjs tests/p2p.test.mjs
+          cat /tmp/stars-extra.snippet >> tests/p2p.test.mjs
+          cat /tmp/p2p-amount-extra.snippet >> tests/p2p.test.mjs
+          npm test
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const p2p=fs.readFileSync('public/assets/p2p.js','utf8');
+          const backend=fs.readFileSync('src/p2p.mjs','utf8');
+          const index=fs.readFileSync('public/index.html','utf8');
+          const css=fs.readFileSync('public/assets/p2p.css','utf8');
+          assert.match(p2p,/invoice\/quote/);
+          assert.match(p2p,/p2p-quote-banner/);
+          assert.match(p2p,/p2p-next-button/);
+          assert.match(p2p,/id="p2p-cancel-yes"/);
+          assert.match(p2p,/if \(invoice\.canCancel && invoice\.status === 'pending' && !invoice\.checkedAt\) renderCancel/);
+          assert.doesNotMatch(p2p,/id="p2p-latest"/);
+          assert.match(backend,/const TRANSFER_STEPS = \[0,100,200,300,400,500,600,700,800,900\]/);
+          assert.match(backend,/requested_amount/);
+          assert.match(index,/p2p\.js\?v=20261119-unique/);
+          assert.match(css,/#p2p-cancel-yes/);
+          console.log('PASS: exact sum preview, 100 UZS fallback, cancellation screen and cached UI assets');
+          JS
