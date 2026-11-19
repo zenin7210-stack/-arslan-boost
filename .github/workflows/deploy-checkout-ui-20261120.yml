@@ -132,11 +132,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --max-time 25 \
-            'https://arslan-boost-bot.zenin7210.workers.dev/assets/p2p.js?v=20261120-pro-ui1' \
-            > /tmp/arslan-live-p2p-after.js
-          printf '%s  %s\n' \
-            '0c01e02b89bb2f1d58d8b2d1c3cf673a796301f25161b2c304c6427461c10685' '/tmp/arslan-live-p2p-after.js' | sha256sum --check --status
+          expected='0c01e02b89bb2f1d58d8b2d1c3cf673a796301f25161b2c304c6427461c10685'
+          matched=0
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent --show-error --max-time 25 \
+              'https://arslan-boost-bot.zenin7210.workers.dev/assets/p2p.js?v=20261120-pro-ui1' \
+              > /tmp/arslan-live-p2p-after.js; then
+              actual="$(sha256sum /tmp/arslan-live-p2p-after.js | cut -d' ' -f1)"
+              if [[ "$actual" == "$expected" ]]; then matched=1; break; fi
+            fi
+            echo "Cloudflare rollout not propagated, retry $attempt"
+            sleep 3
+          done
+          if [[ "$matched" != '1' ]]; then
+            echo '::error::Unexpected published payment script after retries'; exit 1
+          fi
+          echo 'PASS: published payment script matches tested patch'
           curl --fail --silent --show-error --max-time 25 \
             'https://arslan-boost-bot.zenin7210.workers.dev/healthz' \
             > /tmp/arslan-pro-ui-health.json
