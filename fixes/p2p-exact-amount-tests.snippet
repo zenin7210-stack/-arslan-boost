@@ -45,3 +45,40 @@ test('new bank order retains exact advertised price and cannot silently acquire 
   const second=await system.api(2,'checkout',boost);
   assert.deepEqual([second.status,second.data.error],[409,'p2p_amount_unavailable']);
 });
+
+test('stale checked card transfer is recoverable; active new one uses another exact sum',async t=>{
+  t.mock.method(globalThis,'fetch',async()=>Response.json({ok:true,result:{message_id:9}}));
+  const sys=app();
+  const request={amount:10000,method:'uzcard',requestId:'first-expired-checked'};
+  const first=await sys.api(1,'invoice',request);
+  assert.equal(first.status,200);
+  assert.equal(first.data.canCancel,true);
+  const click=await sys.api(1,'invoice/'+first.data.id+'/check',{});
+  assert.equal(click.status,200);
+  assert.equal(click.data.canCancel,false);
+  const badCancel=await sys.api(1,'invoice/'+first.data.id+'/cancel',{});
+  assert.equal(badCancel.status,409,'Do not cancel an invoice already marked as transferred');
+  sys.db.prepare("UPDATE invoices SET created_at = created_at - 1900, expires_at = expires_at - 1900, checked_at = checked_at - 1900 WHERE id=?")
+    .run(first.data.id);
+  const options=await sys.api(1,'invoice/options',{});
+  assert.equal(options.status,200);
+  assert.equal(options.data.active,null,'A stale checked transfer does not block the account');
+  const history=await sys.api(1,'invoice/'+first.data.id+'/status',null,'GET');
+  assert.equal(history.data.status,'expired');
+  const next=await sys.api(1,'invoice',{amount:10000,method:'uzcard',requestId:'new-after-expired-checked'});
+  assert.equal(next.status,200);
+  assert.equal(next.data.uniqueAmount,10100,'Keep old exact sum isolated for delayed bank notice');
+  assert.equal((await sys.api(1,'invoice/quote',{amount:10000,method:'uzcard'})).data.existing,true);
+  const before=await sys.api(1,'invoice/'+next.data.id+'/status',null,'GET');
+  assert.equal(before.data.balance,0);
+  const delayed={sender:'BankDemo',eventId:'old-bank-after-expiry',text:notification(10000,'BANK-OLD-AFTER-EXPIRY',
+    new Date((first.data.createdAt+100) * 1000).toISOString())};
+  const result=await sys.relay(delayed);
+  assert.equal(result.data.matched,true);
+  await sys.drain();
+  const earlier=await sys.api(1,'invoice/'+first.data.id+'/status',null,'GET');
+  const later=await sys.api(1,'invoice/'+next.data.id+'/status',null,'GET');
+  assert.equal(earlier.data.status,'paid');
+  assert.equal(later.data.status,'pending','Delayed bank transfer must not pay a newly created invoice');
+  assert.equal(later.data.balance,10000,'One real bank event is credited exactly once');
+});
