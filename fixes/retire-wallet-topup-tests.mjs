@@ -50,5 +50,20 @@ s=s.replace(oldSameAmount,newSameAmount);
 const oldSecondBuyer='assert.equal((await system.api(2, "donat/state")).data.orders.length, 0);';
 if(!s.includes(oldSecondBuyer))throw Error('Old second buyer expectation not found');
 s=s.replace(oldSecondBuyer,'assert.equal((await system.api(2, "donat/state")).data.orders.length, 1);');
+// The old global one-order block was removed. A *paid* DONAT order may
+// coexist with a fresh BOOST checkout; request keys still prevent duplicates.
+const oldPaidBlock=`  const blocked = await system.api(1, "checkout", boost);
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.data.error, "order_already_active");`;
+const newPaidBlock=`  const newlyAllowed = await system.api(1, "checkout", boost);
+  assert.equal(newlyAllowed.status, 200);`;
+if(!s.includes(oldPaidBlock))throw Error('Old paid-order blocking assertion missing');
+s=s.replace(oldPaidBlock,newPaidBlock);
+const repeat=`  const second = await system.api(1, "checkout", boost);
+  assert.equal(second.status, 200);`;
+if(!s.includes(repeat))throw Error('BOOST repeat checkout not found');
+s=s.replace(repeat,`  const second = await system.api(1, "checkout", boost);
+  assert.equal(second.status, 200);
+  assert.equal(second.data.id,newlyAllowed.data.id);`);
 fs.writeFileSync(file,s);
 console.log('Retired legacy prepayment tests:',obsolete.length,'Direct-order tests remain enabled.');
