@@ -1,0 +1,162 @@
+name: ARSLAN BOOST history UX regression and safe deploy
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/deploy-history-v3.yml]
+permissions:
+  contents: read
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify immutable approved v3 archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -t "$ZIP" >/dev/null
+          unzip -q "$ZIP" -d release
+          cd release/arslan-boost-cloudflare
+          sha256sum public/app.css public/assets/donat/catalog.json wrangler.production.jsonc > /tmp/immutable-ui-and-config.sha
+      - name: Load updated public history and existing verified payment sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin update/arslan-boost-next-20261119
+          for name in app.js worker.mjs store.mjs approved-ui.test.mjs p2p.js; do
+            case "$name" in
+              app.js) target=public/app.js ;;
+              worker.mjs) target=src/worker.mjs ;;
+              store.mjs) target=src/store.mjs ;;
+              approved-ui.test.mjs) target=tests/approved-ui.test.mjs ;;
+              p2p.js) target=public/assets/p2p.js ;;
+            esac
+            git show "FETCH_HEAD:extracted/$name" > "release/arslan-boost-cloudflare/$target"
+          done
+          for name in index.html app.css; do
+            git show "FETCH_HEAD:public/$name" > "release/arslan-boost-cloudflare/public/$name"
+          done
+          git show "FETCH_HEAD:tests/history-ui.test.mjs" > release/arslan-boost-cloudflare/tests/history-ui.test.mjs
+          git fetch --no-tags --depth=1 origin audit-p2p-source-20261119
+          git show "FETCH_HEAD:audit-src/p2p.mjs" > release/arslan-boost-cloudflare/src/p2p.mjs
+          git fetch --no-tags --depth=1 origin fix/boost-stars-2026-11-19
+          git show "FETCH_HEAD:fixes/adapt-boost-stars-legacy-tests.mjs" > /tmp/adapt-stars-tests.mjs
+          git show "FETCH_HEAD:fixes/boost-stars-extra-test.snippet" > /tmp/boost-stars-test.snippet
+          git show "FETCH_HEAD:fixes/p2p-ui-auto-refresh.test.mjs" > release/arslan-boost-cloudflare/tests/p2p-ui-auto-refresh.test.mjs
+          cd release/arslan-boost-cloudflare
+          sha256sum public/assets/donat/catalog.json wrangler.production.jsonc > /tmp/catalog-and-config.sha
+          sha256sum -c /tmp/catalog-and-config.sha
+          test -f migrations/0011_safe_order_flow.sql
+          find src public -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+      - name: Run full payment safety suite and history usability tests
+        working-directory: release/arslan-boost-cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          node /tmp/adapt-stars-tests.mjs tests/p2p.test.mjs
+          cat /tmp/boost-stars-test.snippet >> tests/p2p.test.mjs
+          npm test
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const app=fs.readFileSync('public/app.js','utf8');
+          const server=fs.readFileSync('src/worker.mjs','utf8');
+          const store=fs.readFileSync('src/store.mjs','utf8');
+          const schema=fs.readFileSync('migrations/0008_transfer_orders.sql','utf8');
+          const html=fs.readFileSync('public/index.html','utf8');
+          assert.match(app, /\['uzcard','humo','stars'\]/);
+          assert.match(app, /paymentMethod:'stars',acceptTerms:true/);
+          assert.match(app, /showStarsPayment\(\{kind:'order'/);
+          assert.match(server, /const byStars = kind === "order" && data.paymentMethod === "stars"/);
+          assert.match(server, /if \(byStars\) result.payment = await paymentDetails/);
+          assert.match(store, /kind IN \('topup','order'\) AND method = 'stars'/);
+          assert.match(schema, /CREATE TRIGGER settle_order_payment/);
+          assert.match(html, /id="history-refresh"/);
+          assert.match(html, /app.js\?v=20261119-history/);
+          JS
+      - name: Save verified history and payment-safe release package for deployment
+        uses: actions/upload-artifact@v4
+        with:
+          name: arslan-history-v3-tested
+          path: release/arslan-boost-cloudflare
+          if-no-files-found: error
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: boost-stars-v3-tested
+          path: release/arslan-boost-cloudflare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate production target and current D1 schema (read-only)
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN is missing'; exit 1; }
+          node - <<'JS'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('wrangler.production.jsonc','utf8'));
+          if(c.name!=='arslan-boost-bot' || c.d1_databases?.[0]?.database_name!=='arslan-boost-payments')
+            throw Error('Unexpected Cloudflare Worker or D1 target');
+          if(c.vars?.ENABLE_PAYMENTS!=='1'||c.vars?.BOT_USERNAME!=='arslanboostbot')
+            throw Error('Unexpected production bot/payment settings');
+          if(Object.prototype.hasOwnProperty.call(c.vars||{},'P2P_MODE'))
+            throw Error('P2P_MODE must remain a private production setting');
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id' > /tmp/stars_v3_ledger.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('orders','payments','accounts','settle_order_payment','p2p_paid_requires_bank_event','arslan_one_active_boost')" > /tmp/stars_v3_schema.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          function rows(p){const j=JSON.parse(fs.readFileSync(p,'utf8'));return (Array.isArray(j)?j:[j]).flatMap(x=>x.results||[]);}
+          const migrations=rows('/tmp/stars_v3_ledger.json').map(x=>x.name);
+          const expected=[
+            '0001_checkout.sql','0002_p2p.sql','0003_partners.sql','0004_telegram_entry.sql',
+            '0005_checkout_webhook.sql','0006_exact_transfer_amount.sql','0007_miniapp_receipt_upload.sql',
+            '0008_transfer_orders.sql','0009_bank_confirmation.sql','0010_manual_approval.sql',
+            '0011_safe_order_flow.sql'
+          ];
+          if(JSON.stringify(migrations)!==JSON.stringify(expected))
+            throw Error('Unexpected D1 migration ledger: refusing deployment');
+          const found=new Set(rows('/tmp/stars_v3_schema.json').map(x=>x.name));
+          for(const k of ['orders','payments','accounts','settle_order_payment','p2p_paid_requires_bank_event','arslan_one_active_boost'])
+            if(!found.has(k))throw Error('Missing D1 schema object: '+k);
+          console.log('D1 unchanged; existing Stars settlement trigger and P2P protection verified');
+          JS
+      - name: Record D1 recovery bookmark without altering data
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments --config wrangler.production.jsonc
+      - name: Deploy tested ARSLAN BOOST history interface with unchanged payment settlement
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo '::notice::History usability update published; card/Stars payment guards and balances preserved.'
