@@ -78,9 +78,13 @@ jobs:
           curl --fail --silent --show-error --retry 2 --max-time 20 \
             'https://arslan-boost-bot.zenin7210.workers.dev/assets/p2p.js?v=20261119-exacts4' \
             > /tmp/arslan-live-p2p-before.js
-          printf '%s  %s\n' \
-            'db6b5524bc28bbb5258e59ca8a292ad2555e2fdb4dd5a5ffb600ddafd3d15a97' '/tmp/arslan-live-p2p-before.js' | sha256sum --check --status
-          echo 'PASS: live asset matches precisely tested previous version'
+          live="$(sha256sum /tmp/arslan-live-p2p-before.js | cut -d' ' -f1)"
+          baseline='db6b5524bc28bbb5258e59ca8a292ad2555e2fdb4dd5a5ffb600ddafd3d15a97'
+          published='0c01e02b89bb2f1d58d8b2d1c3cf673a796301f25161b2c304c6427461c10685'
+          if [[ "$live" != "$baseline" && "$live" != "$published" ]]; then
+            echo '::error::Unexpected production file; refusing update'; exit 1
+          fi
+          echo 'PASS: live asset matches tested baseline or already-installed UI patch'
 
       - name: Check Cloudflare payment mode and D1 migration ledger (read-only)
         working-directory: release
