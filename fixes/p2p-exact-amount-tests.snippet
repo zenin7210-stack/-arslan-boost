@@ -140,3 +140,22 @@ test('bank invoice loading bypasses Stars checkout settings but still rejects un
   const unauthorized=await system.send('/api/invoice/recover',{},{});
   assert.equal(unauthorized.status,401);
 });
+
+test('unexpected auth/role runtime errors produce stable safe P2P error codes',async()=>{
+  const sys=app({ADMIN_IDS:{unexpected:'not-string'}});
+  const res=await sys.api(1,'invoice/options',{});
+  assert.equal(res.status,503);
+  assert.equal(res.data.error,'p2p_handler_type_failed');
+});
+test('D1 error while reading invoice options identifies failing stage',async()=>{
+  const sys=app();
+  const prepare=sys.env.DB.prepare.bind(sys.env.DB);
+  sys.env.DB.prepare=sql=>{
+    if(sql.includes("FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?"))
+      throw new Error('Synthetic unavailable D1 in test only');
+    return prepare(sql);
+  };
+  const res=await sys.api(1,'invoice/options',{});
+  assert.equal(res.status,503);
+  assert.equal(res.data.error,'p2p_options_current_failed');
+});
