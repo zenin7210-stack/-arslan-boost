@@ -34,6 +34,7 @@
       quoteChanged:'Эта сумма занята. Для вас подобрана сумма:',
       quoteHint:'Если сумма занята, система предложит ближайшую свободную. Уточните сумму на следующем экране.',
       creditedAll:'На баланс будет зачислено',
+      retryLoading:'Повторить загрузку', accessDenied:'Оплата картой сейчас недоступна для этого аккаунта.',
     },
     uz: {
       wallet: 'Karta orqali to‘ldirish', balance: 'O‘tkazmalar balansi', amount: 'To‘ldirish summasi',
@@ -68,6 +69,7 @@
       quoteChanged:'Bu summa band. Siz uchun yangi summa:',
       quoteHint:'Summa band bo‘lsa, tizim yaqin bo‘sh summani tanlaydi. Aniq summa keyingi oynada tasdiqlanadi.',
       creditedAll:'Balansga tushadigan summa',
+      retryLoading:'Qayta yuklash', accessDenied:'Karta orqali to‘lov ushbu akkaunt uchun hozircha mavjud emas.',
     },
   };
 
@@ -79,6 +81,8 @@
     const e = ui.escape;
     const within = selector => ui.body.querySelector(selector);
     const money = value => ui.money(value) + (ui.lang() === 'ru' ? ' сум' : ' so‘m');
+    const digitsOnly = value => String(value).replace(/[^0-9]/g,'');
+    const prettyAmount = value => digitsOnly(value).replace(/\B(?=(\d{3})+(?!\d))/g,' ');
 
     function stop() {
       generation++;
@@ -98,7 +102,7 @@
     function warning(error) {
       const text = {
         p2p_method_unavailable: 'unavailable', p2p_amount_unavailable: 'amountUnavailable',
-        p2p_disabled: 'unavailable', p2p_invoice_in_progress: 'inProgress',
+        p2p_disabled: 'accessDenied', p2p_invoice_in_progress: 'inProgress',
       }[error?.message] || 'error';
       const target = within('.p2p-feedback');
       if (target) target.textContent = t(text);
@@ -143,7 +147,7 @@
         <div><label for="p2p-value">${e(t('amount'))}</label>
         <div class="p2p-input-row" data-keyboard-inline>
           <input id="p2p-value" inputmode="numeric" enterkeyhint="done"
-            maxlength="9" autocomplete="off" value="${e(amount)}">
+            maxlength="13" autocomplete="off" value="${e(prettyAmount(amount))}">
           <span class="p2p-input-tag">${e(t('amount'))}</span>
         </div></div>
         <div class="p2p-presets">${[10000, 50000, 100000].map(n =>
@@ -210,9 +214,22 @@
         amount=value;
         scheduleQuote();
       };
-      field.oninput=()=>change(field.value);
+      field.oninput=()=>{
+        const prefix=field.value.slice(0,field.selectionStart ?? field.value.length);
+        const count=digitsOnly(prefix).length;
+        const next=digitsOnly(field.value).slice(0,9);
+        const formatted=prettyAmount(next);
+        field.value=formatted;
+        let caret=0,seen=0;
+        while(caret<formatted.length && seen<count){
+          if(/[0-9]/.test(formatted[caret]))seen++;
+          caret++;
+        }
+        try{field.setSelectionRange(caret,caret);}catch{}
+        change(next);
+      };
       ui.body.querySelectorAll('[data-p2p-amount]').forEach(button=>button.onclick=()=>{
-        ui.dismissKeyboard();field.value=button.dataset.p2pAmount;change(field.value);
+        ui.dismissKeyboard();field.value=prettyAmount(button.dataset.p2pAmount);change(button.dataset.p2pAmount);
       });
       ui.body.querySelectorAll('[data-p2p-method]').forEach(button=>button.onclick=()=>{
         if(method!==button.dataset.p2pMethod)key=null;
