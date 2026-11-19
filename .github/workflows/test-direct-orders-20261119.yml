@@ -1,4 +1,4 @@
-name: Verify +100 bank allocation, service-specific Stars and iOS layout (staging)
+name: Verify alternate bank settlement, updated cache and iOS UI
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
