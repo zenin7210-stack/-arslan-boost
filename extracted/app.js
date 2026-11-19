@@ -1072,7 +1072,7 @@
   document.addEventListener('wheel',e=>{if(e.ctrlKey)stopZoom(e);},{passive:false});
   applyLanguage();
   nav(mainPage, true);
-  async function loadConfig(){if(!tg?.initData)return;try{const response=await fetch(apiUrl('config'),{signal:AbortSignal.timeout(5000)});if(!response.ok)return;const server=await response.json();if(!server.arslanBoostApi)return;if(server.botUrl)config.botUrl=server.botUrl;for(const key of ['termsUrl','starsRate','starsMax'])config[key]=server[key];if(Array.isArray(server.prices)&&server.prices.length===prices.length&&server.prices.every(p=>Number.isSafeInteger(p)&&p>=0)){
+  async function loadConfig(){if(!tg?.initData)return;try{const response=await fetch(apiUrl('config'),{signal:AbortSignal.timeout(5000)});if(!response.ok)return;const server=await response.json();if(!server.arslanBoostApi)return;if(server.botUrl)config.botUrl=server.botUrl;for(const key of ['termsUrl','starsRate','starsMax','orderStarsRate','orderStarsMax'])config[key]=server[key];if(Array.isArray(server.prices)&&server.prices.length===prices.length&&server.prices.every(p=>Number.isSafeInteger(p)&&p>=0)){
       prices=server.prices;
       calibrationLegendPrice=Number.isSafeInteger(server.calibrationLegendPrice)?server.calibrationLegendPrice:0;
       boostModeSurcharge=Number.isSafeInteger(server.boostModeSurcharge)?server.boostModeSurcharge:0;
