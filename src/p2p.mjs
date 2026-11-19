@@ -197,6 +197,8 @@ function reserveInvoice(store, candidates, { userId, key, amount, method, time, 
 }
 async function quoteInvoice(store, env, user, data) {
   const amount=integer(data.amount,MIN_AMOUNT,MAX_AMOUNT);
+  // Recover old bank-check requests even when scheduled cleanup was delayed.
+  await expireInvoices(store, now(), env.P2P_MODE !== 'manual');
   const method=data.method;
   if(typeof method!=='string'||!METHOD.test(method))throw new RequestError('invalid_payment_method');
   const active=await store.first("SELECT * FROM invoices WHERE user_id=? AND status='pending' AND expires_at>?",user.id,now());
@@ -229,6 +231,9 @@ async function createInvoice(store, env, user, data) {
   const candidates = (await availableCards(store, env)).filter(card => card.method === method);
   if (!candidates.length) throw new RequestError("p2p_method_unavailable", 409);
   const time = now();
+  // Expire old unverified attempts before the unique pending-invoice index is evaluated.
+  // Bank notices remain matchable against expired invoices, not rejected/paid ones.
+  await expireInvoices(store, time, env.P2P_MODE !== "manual");
   const active = "SELECT * FROM invoices WHERE user_id = ? AND status = 'pending'";
   const [, inserted, open, saved] = await store.db.batch([
     expirePending(store, time),
@@ -299,6 +304,9 @@ async function cancelUnpaidInvoice(store, env, userId, invoiceId) {
 export async function p2pApi(request, env, store, user, data, path, enqueueReview = () => {}) {
   requireAccess(env, user.id);
   if (path === "invoice/options" && request.method === "POST") {
+    // A stale checked_at request must not make the wallet inaccessible forever
+    // if the cron has not run. No paid transfer is cancelled by this cleanup.
+    await expireInvoices(store, now(), env.P2P_MODE !== 'manual');
     const current = await store.first(`
       SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?`, user.id, now());
     const active = current?.order_payment_id ? null : current;
