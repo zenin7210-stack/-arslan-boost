@@ -405,3 +405,16 @@ body::before {
 .arslan-payment-grid .arslan-payment-tile:disabled.selected{border-color:#284765}
 .donat-payment-picker{margin:15px 0 10px}
 .donat-payment-note{margin:9px 0 14px;color:#a6bfd5;font-size:12px;line-height:1.45}
+
+/* iOS Telegram keyboard viewport stabilization — shared by all DONAT products. */
+.quick{grid-template-columns:repeat(2,minmax(0,1fr))}
+.overlay{top:var(--visible-top,0px);bottom:auto;height:var(--visible-height,100dvh);min-height:0}
+.overlay>.sheet{max-height:calc(100% - 8px);min-height:0}
+.overlay>.sheet.product-sheet{height:100%;max-height:100%;margin:0;overflow:hidden}
+.product-sheet #sheet-body{min-height:0}
+.product-sheet .widget-scroll{min-height:0;scroll-padding-block:12px 30px;-webkit-overflow-scrolling:touch}
+body.keyboard-open .product-sheet .widget-footer{display:none!important}
+body.keyboard-open .product-sheet .widget-scroll{padding-bottom:30px}
+body.keyboard-open .overlay>.sheet:not(.product-sheet){max-height:calc(100% - 8px)}
+body.keyboard-open .keyboard-done{z-index:30}
+.keyboard-done{right:12px;bottom:calc(8px + max(var(--keyboard-inset,0px),var(--safe)))}
