@@ -1,4 +1,4 @@
-name: Permit multiple BOOST and DONAT orders while preserving P2P invoice safety
+name: Publish new multi-order checkout with Telegram cache refresh
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -106,7 +106,7 @@ jobs:
           assert.match(fs.readFileSync('migrations/0012_requested_card_topup.sql','utf8'),/ALTER TABLE invoices/);
           assert.match(fs.readFileSync('migrations/0013_order_exact_amount.sql','utf8'),/COALESCE\(NEW.requested_amount, NEW.base_amount\)/);
           assert.match(fs.readFileSync('public/index.html','utf8'),/p2p\.js\?v=20261119-exacts4/);
-          assert.match(fs.readFileSync('public/index.html','utf8'),/app\.js\?v=20261119-fix4/);
+          assert.match(fs.readFileSync('public/index.html','utf8'),/app\.js\?v=20261119-multi5/);
           JS
       - name: Read D1 migration ledger and existing safeguards (no changes)
         id: p2p_schema
