@@ -49,6 +49,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sed -n '265,345p' tests/p2p.test.mjs
+          sed -n '515,565p' tests/p2p.test.mjs
           npm test
           node --input-type=module - <<'JS'
           import fs from 'node:fs';
