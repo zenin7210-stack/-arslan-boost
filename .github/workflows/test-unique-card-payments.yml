@@ -1,4 +1,4 @@
-name: Verify agreed P2P exact sums and cancel UX (staging only)
+name: Verify stale invoice recovery and grouped amount input (staging)
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -72,6 +72,10 @@ jobs:
           const css=fs.readFileSync('public/assets/p2p.css','utf8');
           assert.match(p2p,/invoice\/quote/);
           assert.match(p2p,/p2p-quote-banner/);
+          assert.ok(p2p.includes('const prettyAmount = value =>'));
+          assert.ok(p2p.includes('id="p2p-load-retry"'));
+          assert.ok(p2p.includes('showLoading(() => open(preferredMethod))'));
+          assert.ok(backend.includes("await expireInvoices(store, now(), env.P2P_MODE !== 'manual')"));
           assert.match(p2p,/p2p-next-button/);
           assert.match(p2p,/id="p2p-cancel-yes"/);
           assert.match(p2p,/if \(invoice\.canCancel && invoice\.status === 'pending' && !invoice\.checkedAt\) renderCancel/);
