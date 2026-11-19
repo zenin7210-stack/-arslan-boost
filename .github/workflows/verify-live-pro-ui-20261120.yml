@@ -1,0 +1,29 @@
+name: ARSLAN BOOST — read-only post-deploy diagnostics
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/verify-live-pro-ui-20261120.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect published asset and health without modifying production
+        run: |
+          set -euo pipefail
+          for suffix in 'assets/p2p.js?v=20261120-pro-ui1' 'assets/p2p.js?v=20261119-exacts4' 'healthz' 'index.html'; do
+            url="https://arslan-boost-bot.zenin7210.workers.dev/$suffix"
+            echo "Inspect: $suffix"
+            code="$(curl -sSL --max-time 25 -o /tmp/arslan-payload -w '%{http_code}' "$url")"
+            echo "HTTP $code, bytes $(wc -c < /tmp/arslan-payload)"
+            sha256sum /tmp/arslan-payload
+            if [[ "$suffix" == "healthz" ]]; then
+              node -e "const fs=require('fs');let t=fs.readFileSync('/tmp/arslan-payload','utf8'); try{const j=JSON.parse(t);console.log('health fields',Object.keys(j).join(','),'ok',j.ok,'paymentsEnabled',j.paymentsEnabled)}catch(e){console.log('health body non-JSON')}"
+            fi
+            if [[ "$suffix" == 'index.html' ]]; then
+              grep -o 'assets/p2p.js?v=[A-Za-z0-9-]*' /tmp/arslan-payload || true
+            fi
+          done
