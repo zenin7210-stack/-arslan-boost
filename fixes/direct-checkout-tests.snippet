@@ -1,42 +1,24 @@
 
-test('DONAT Stars creates a genuine Telegram invoice and settles exactly once without touching wallet balances',async t=>{
-  t.mock.method(globalThis,'fetch',async(url,init)=>{
-    const method=url.split('/').at(-1);
-    return Response.json({ok:true,result:method==='createInvoiceLink'?'https://t.me/$donat-stars-test':true});
-  });
+test('DONAT Stars is disabled while BOOST Stars payment remains available',async t=>{
+  t.mock.method(globalThis,'fetch',async(url)=>Response.json({
+    ok:true,result:url.endsWith('/createInvoiceLink')?'https://t.me/$boost-stars-test':true
+  }));
   const system=app();
-  const payload={product:'spin_coins',option:'100',detail:'123456',expectedAmount:21990,
-    paymentMethod:'stars',acceptTerms:true,requestId:'donat-stars-direct-001'};
-  const before=(await system.api(1,'state')).data;
-  const result=await system.api(1,'donat/create',payload);
-  assert.equal(result.status,200);
-  assert.equal(result.data.status,'pending');
-  assert.equal(result.data.amount,21990);
-  assert.equal(result.data.payment.kind,'donat');
-  assert.equal(result.data.payment.method,'stars');
-  assert.equal(result.data.payment.stars,138);
-  assert.equal(result.data.payment.invoiceLink,'https://t.me/$donat-stars-test');
-  const payment=result.data.payment;
-  const replay=await system.api(1,'donat/create',payload);
-  assert.equal(replay.status,200);
-  assert.equal(replay.data.id,result.data.id);
-  assert.equal(replay.data.payment.id,payment.id);
-  const valid={from:{id:1},currency:'XTR',invoice_payload:'ab:'+payment.id,total_amount:138};
-  await system.webhook({pre_checkout_query:{...valid,id:'donat-checkout-001'}});
-  const paid={from:{id:1},chat:{type:'private'},successful_payment:{
-    ...valid,telegram_payment_charge_id:'donat-stars-charge-once'}};
-  await system.webhook({message:paid});
-  await system.webhook({message:paid});
-  await system.drain();
-  const after=(await system.api(1,'state')).data;
-  assert.equal(after.balance,before.balance);
-  assert.equal(after.starsBalance,before.starsBalance);
-  assert.equal((await system.api(1,'donat/state')).data.orders[0].status,'paid');
-  assert.equal(after.payments.find(p=>p.id===payment.id).status,'paid');
-  assert.equal(system.db.prepare("SELECT COUNT(*) AS n FROM payments WHERE kind='donat' AND method='stars'").get().n,1);
-  const paidAgain=await system.api(1,'donat/create',payload);
-  assert.equal(paidAgain.data.id,result.data.id);
-  assert.equal(paidAgain.data.status,'paid');
+  const blocked=await system.api(1,'donat/create',{
+    product:'spin_coins',option:'100',detail:'123456',
+    expectedAmount:21990,paymentMethod:'stars',acceptTerms:true,requestId:'donat-stars-blocked'
+  });
+  assert.equal(blocked.status,409);
+  assert.equal(blocked.data.error,'invalid_payment_method');
+  assert.equal(system.db.prepare("SELECT COUNT(*) AS n FROM donat_orders").get().n,0);
+  const boost=await system.api(1,'checkout',{
+    mode:'wing',fromIndex:0,toIndex:3,gameId:'TEST12345',
+    expectedAmount:13000,paymentMethod:'stars',acceptTerms:true,requestId:'boost-stars-still-works'
+  });
+  assert.equal(boost.status,200);
+  assert.equal(boost.data.payment.method,'stars');
+  assert.equal(boost.data.payment.kind,'order');
+  assert.ok(boost.data.payment.invoiceLink);
 });
 test('Only three direct payment methods: balance and new wallet top-ups are disabled without erasing old balances',async()=>{
   const system=app();
@@ -66,4 +48,46 @@ test('Existing confirmed P2P card order still creates a linked invoice without w
   assert.equal(check.data.status,'pending');
   const wallet=(await system.api(1,'state')).data;
   assert.equal(wallet.balance,0);
+});
+
+test('a busy bank amount selects +100 for the next customer without altering product price',async()=>{
+  const system=app();
+  const make=(id,key)=>system.api(id,'donat/create',{
+    product:'spin_coins',option:'100',detail:'123456',expectedAmount:21990,
+    paymentMethod:'uzcard',requestId:key
+  });
+  const first=await make(1,'same-amount-first');
+  assert.equal(first.status,200);
+  const second=await make(2,'same-amount-second');
+  assert.equal(second.status,200);
+  const third=await make(3,'same-amount-third');
+  assert.equal(third.status,200);
+  for(const [index,result] of [first,second,third].entries()){
+    assert.equal(result.data.amount,21990);
+    const invoice=system.db.prepare('SELECT * FROM invoices WHERE id=?').get(result.data.invoiceId);
+    assert.equal(invoice.requested_amount,21990);
+    assert.equal(invoice.unique_amount,21990+index*100);
+    assert.equal(invoice.base_amount,invoice.unique_amount);
+    const payment=system.db.prepare('SELECT * FROM payments WHERE id=?').get(invoice.order_payment_id);
+    assert.equal(payment.amount,21990);
+  }
+  const duplicated=await make(2,'same-amount-second');
+  assert.equal(duplicated.data.id,second.data.id);
+  assert.equal(duplicated.data.invoiceId,second.data.invoiceId);
+  assert.equal(system.db.prepare("SELECT COUNT(*) AS n FROM invoices WHERE status='pending'").get().n,3);
+});
+test('new orders never reserve below listed price and can recover from a cancelled unpaid order',async()=>{
+  const system=app();
+  const payload={product:'spin_coins',option:'100',detail:'123456',expectedAmount:21990,
+    paymentMethod:'uzcard'};
+  const old=await system.api(1,'donat/create',{...payload,requestId:'order-before-cancel'});
+  assert.equal(old.status,200);
+  const blocked=await system.api(1,'donat/create',{...payload,requestId:'order-after-blocked'});
+  assert.equal(blocked.data.error,'order_already_active');
+  const cancellation=await system.api(1,'invoice/'+old.data.invoiceId+'/cancel',{});
+  assert.equal(cancellation.data.status,'cancelled');
+  const replacement=await system.api(1,'donat/create',{...payload,requestId:'order-after-blocked'});
+  assert.equal(replacement.status,200);
+  const invoice=system.db.prepare('SELECT * FROM invoices WHERE id=?').get(replacement.data.invoiceId);
+  assert.ok(invoice.unique_amount>=21990);
 });
