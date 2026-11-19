@@ -1,4 +1,4 @@
-name: Publish BOOST/DONAT fixes, +100 settlement trigger and iOS keyboard repair
+name: Fix DONAT UZCARD blocked by legacy unpaid Stars order
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -222,4 +222,4 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
-          echo '::notice::ARSLAN BOOST iOS keyboard, hidden Balance/Cashback, DONAT Stars disabled, +100 bank sum collision and verified D1 settlement migrated.'
+          echo '::notice::Unstarted pending Stars payments safely cancelled on new valid checkout; card and verified Stars flows preserved.'
