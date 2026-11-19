@@ -745,6 +745,17 @@
         if (error.message === 'order_quote_changed') {
           closeSheet();
           await refreshPrices();
+        } else if (['order_already_active','p2p_invoice_in_progress'].includes(error.message)) {
+          // Don't strand the customer at a dead end. An existing unpaid
+          // invoice can be viewed and explicitly cancelled by its owner.
+          try {
+            const recovered = await api('invoice/recover', {});
+            if (recovered.active?.id) {
+              await p2p.resume(recovered.active.id, showOrderHistory);
+              return;
+            }
+          } catch { /* fallback to the orders list */ }
+          nav('history');
         }
         toast(errorMessage(error));
       }
