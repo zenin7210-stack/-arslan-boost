@@ -1,0 +1,51 @@
+name: Diagnose live ARSLAN P2P old invoice blocking (read only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/diagnose-invoice-options.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Unpack verified Cloudflare config and query only aggregate invoicing state
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          mkdir -p /tmp/arslan_diag
+          unzip -p "$ZIP" arslan-boost-cloudflare/wrangler.production.jsonc > /tmp/arslan_diag/wrangler.production.jsonc
+          cd /tmp/arslan_diag
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT status, COUNT(*) AS n FROM invoices GROUP BY status ORDER BY status" > /tmp/states.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT COUNT(*) AS pending_total,
+              COALESCE(SUM(CASE WHEN checked_at IS NULL THEN 1 ELSE 0 END),0) AS without_paid_click,
+              COALESCE(SUM(CASE WHEN checked_at IS NOT NULL THEN 1 ELSE 0 END),0) AS after_paid_click,
+              COALESCE(SUM(CASE WHEN checked_at IS NOT NULL AND expires_at < unixepoch('now')-1200 THEN 1 ELSE 0 END),0) AS stale_over_20min,
+              COALESCE(SUM(CASE WHEN checked_at IS NOT NULL AND expires_at < unixepoch('now') THEN 1 ELSE 0 END),0) AS expired_after_click,
+              COALESCE(SUM(CASE WHEN checked_at IS NULL AND expires_at < unixepoch('now') THEN 1 ELSE 0 END),0) AS expired_without_click,
+              COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM p2p_incoming i WHERE i.invoice_id=invoices.id) THEN 1 ELSE 0 END),0) AS linked_bank_events
+              FROM invoices WHERE status = 'pending'" > /tmp/stale.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT COUNT(*) AS linked, COUNT(DISTINCT invoice_id) AS unique_links FROM p2p_incoming" > /tmp/bank.json
+          npx --yes wrangler@4 secret list --config wrangler.production.jsonc --json > /tmp/secret_names.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const entries=p=>{const x=JSON.parse(fs.readFileSync(p,'utf8'));return (Array.isArray(x)?x:[x]).flatMap(v=>v.results||[])};
+          for(const file of ['/tmp/states.json','/tmp/stale.json','/tmp/bank.json']) console.log(file,JSON.stringify(entries(file)));
+          const names=new Set(JSON.parse(fs.readFileSync('/tmp/secret_names.json','utf8')).map(x=>x.name));
+          for(const key of ['P2P_MODE','P2P_CARDS','P2P_USERS','ADMIN_ID','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'])
+            console.log('Secret configured:',key,names.has(key));
+          JS
