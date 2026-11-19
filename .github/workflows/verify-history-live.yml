@@ -1,0 +1,43 @@
+name: Verify live history UX after deployment (read-only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/verify-history-live.yml]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify published ARSLAN BOOST history UI and payment availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL=https://arslan-boost-bot.zenin7210.workers.dev
+          curl --fail --silent --show-error --location --max-time 25 "$URL/" > /tmp/live-index.html
+          curl --fail --silent --show-error --location --max-time 25 "$URL/app.js?v=20261119-history" > /tmp/live-app.js
+          curl --fail --silent --show-error --location --max-time 25 "$URL/app.css?v=20261119-history" > /tmp/live-app.css
+          curl --fail --silent --show-error --location --max-time 25 "$URL/healthz" > /tmp/live-health.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const html=fs.readFileSync('/tmp/live-index.html','utf8');
+          const app=fs.readFileSync('/tmp/live-app.js','utf8');
+          const css=fs.readFileSync('/tmp/live-app.css','utf8');
+          const health=JSON.parse(fs.readFileSync('/tmp/live-health.json','utf8'));
+          const checks=[
+            ['live refresh control',html.includes('id="history-refresh"')],
+            ['accessible order and payment tabs',html.includes('role="tablist"')],
+            ['new history stylesheet',html.includes('app.css?v=20261119-history')],
+            ['updated history JavaScript',html.includes('app.js?v=20261119-history')],
+            ['empty state action',app.includes('historyStartOrder')&&app.includes('historyStartTopup')],
+            ['automatic paid filter',app.includes("paid','approved','fulfilled','completed")],
+            ['live payment path still supported',app.includes("['uzcard','humo','stars']")],
+            ['accessible compact rows',css.includes('#history .history-row')],
+            ['server payment backend operational',health.paymentsEnabled===true]
+          ];
+          for(const [name,ok] of checks){if(!ok)throw Error('LIVE FAIL: '+name);console.log('PASS:',name);}
+          JS
