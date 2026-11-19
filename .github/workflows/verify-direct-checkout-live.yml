@@ -1,0 +1,51 @@
+name: Verify live direct checkout after publication (read-only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/verify-direct-checkout-live.yml]
+permissions: {contents: read}
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Verify published assets, direct checkout and payment auth
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          curl --fail --silent --show-error --max-time 20 "$URL/" > /tmp/index.html
+          curl --fail --silent --show-error --max-time 20 "$URL/app.js?v=20261119-direct3" > /tmp/app.js
+          curl --fail --silent --show-error --max-time 20 "$URL/assets/donat/shop.js?v=20261119-direct3" > /tmp/shop.js
+          curl --fail --silent --show-error --max-time 20 "$URL/healthz" > /tmp/health.json
+          curl --fail --silent --show-error --max-time 20 "$URL/api/config" > /tmp/config.json
+          code="$(curl -sS --max-time 20 -o /tmp/unauth -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data '{"product":"spin_coins","option":"100","detail":"123456","paymentMethod":"stars"}' \
+            "$URL/api/donat/create")"
+          if [ "$code" != '401' ] && [ "$code" != '403' ]; then
+            echo "::error::Public unauthenticated order request was not rejected ($code)";exit 1
+          fi
+          node - <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict');
+          const app=fs.readFileSync('/tmp/app.js','utf8'),shop=fs.readFileSync('/tmp/shop.js','utf8');
+          const html=fs.readFileSync('/tmp/index.html','utf8');
+          const health=JSON.parse(fs.readFileSync('/tmp/health.json','utf8'));
+          const cfg=JSON.parse(fs.readFileSync('/tmp/config.json','utf8'));
+          const checks=[
+            ['new BOOST script',html.includes('app.js?v=20261119-direct3')],
+            ['new DONAT Shop script',html.includes('shop.js?v=20261119-direct3')],
+            ['three order choices',app.includes("['uzcard','humo','stars']")],
+            ['BOOST wallet button removed',!app.includes('id="order-topup"')],
+            ['DONAT wallet button removed',!shop.includes('id="donat-topup"')],
+            ['DONAT card checkout',shop.includes('startCardOrder(payload,submit')],
+            ['DONAT direct Telegram Stars',shop.includes("api('donat/create',{...payload,acceptTerms:true})")],
+            ['previous wallet read-only',app.includes("balance-readonly")],
+            ['Telegram invoices enabled',health.paymentsEnabled===true],
+            ['Stars rate configured',Number(cfg.orderStarsRate)>0],
+            ['working backend',cfg.arslanBoostApi===true]
+          ];
+          for(const [label,passed] of checks){assert.ok(passed,label);console.log('PASS:',label);}
+          console.log('Direct order checkout assets verified; no live payments or balances were changed.');
+          JS
