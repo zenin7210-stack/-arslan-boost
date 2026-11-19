@@ -1,4 +1,4 @@
-name: Verify BOOST Stars checkout against locked production v3
+name: Verify BOOST Stars and automatic P2P status against locked production v3
 on:
   push:
     branches: [fix/boost-stars-2026-11-19]
@@ -29,31 +29,35 @@ jobs:
           unzip -q "$ZIP" -d release
           cd release/arslan-boost-cloudflare
           sha256sum public/app.css public/assets/donat/catalog.json wrangler.production.jsonc > /tmp/immutable-ui-and-config.sha
-      - name: Load staged BOOST-only sources (no CSS, catalog, price, secrets or DB edits)
+      - name: Load approved Stars and P2P status-only sources (no CSS, catalog, secrets or DB edits)
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin staging-boost-v3-source-20261119
-          for name in app.js worker.mjs store.mjs approved-ui.test.mjs; do
+          for name in app.js worker.mjs store.mjs approved-ui.test.mjs p2p.js; do
             case "$name" in
               app.js) target=public/app.js ;;
               worker.mjs) target=src/worker.mjs ;;
               store.mjs) target=src/store.mjs ;;
               approved-ui.test.mjs) target=tests/approved-ui.test.mjs ;;
+              p2p.js) target=public/assets/p2p.js ;;
             esac
             git show "FETCH_HEAD:extracted/$name" > "release/arslan-boost-cloudflare/$target"
           done
+          git fetch --no-tags --depth=1 origin audit-p2p-source-20261119
+          git show "FETCH_HEAD:audit-src/p2p.mjs" > release/arslan-boost-cloudflare/src/p2p.mjs
           cd release/arslan-boost-cloudflare
           sha256sum -c /tmp/immutable-ui-and-config.sha
           test -f migrations/0011_safe_order_flow.sql
           find src public -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
-      - name: Run full existing test suite plus Stars order invariants
+      - name: Test Stars settlement, card bank confirmation, status polling and idempotency
         working-directory: release/arslan-boost-cloudflare
         shell: bash
         run: |
           set -euo pipefail
           node ../../fixes/adapt-boost-stars-legacy-tests.mjs tests/p2p.test.mjs
           cat ../../fixes/boost-stars-extra-test.snippet >> tests/p2p.test.mjs
+          cp ../../fixes/p2p-ui-auto-refresh.test.mjs tests/p2p-ui-auto-refresh.test.mjs
           npm test
           node --input-type=module - <<'JS'
           import fs from 'node:fs';
