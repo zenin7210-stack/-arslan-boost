@@ -1,8 +1,8 @@
 'use strict';
 
 window.initArslanShop = function ({
-  config, lang, api, connected, openSheet, closeSheet, sheetBody, openTopup, walletBalance, syncState,
-  transferOrderChoices, bindTransferOrder,
+  config, lang, api, connected, openSheet, closeSheet, sheetBody, syncState,
+  paymentMethodTiles, paymentReady, paymentTermsHtml, startCardOrder, onStarsOrder,
   openTelegram, telegramUrl, toast, escape, money, glyph, showHistory
 }) {
   const translations = {
@@ -466,24 +466,65 @@ window.initArslanShop = function ({
   }
 
   function paymentSheet(order) {
-    const balance=walletBalance(), enough=balance>=total(order);
+    const available = method => connected() && paymentReady(method);
+    const method=order.paymentMethod && available(order.paymentMethod) ? order.paymentMethod
+      : ['uzcard','humo','stars'].find(available) || 'stars';
+    order.paymentMethod=method;
+    const terms=method==='stars' ? paymentTermsHtml(available('stars')) : '';
     openSheet(t('pay'),`
       <p><strong>${escape(order.item.title)}</strong> · ${escape(packageName(order))}</p>
       ${priceSummary(total(order))}
-      <p>${escape(t('balance'))} · ${amount(balance)}</p>
-      ${transferOrderChoices()}
-      <button class="action" type="button" id="submit-order" ${!connected()||!enough?'disabled':''}>${escape(t('payBalance'))}</button>
-      ${enough?'':`<button class="secondary" type="button" id="donat-topup">${escape(t('topup'))}</button>`}
+      <div class="donat-payment-picker">${paymentMethodTiles(method,true,available)}</div>
+      ${terms}
+      <p class="donat-payment-note">${escape(lang()==='ru'
+        ? 'Заказ передаётся после подтверждения оплаты.'
+        : 'To‘lov tasdiqlangach buyurtma bajarishga yuboriladi.')}</p>
+      <button class="action" type="button" id="submit-donat-payment" disabled>${escape(t('next'))}</button>
       <button class="secondary" type="button" id="back-product">← ${t('back')}</button>`);
-    const submit=sheetBody.querySelector('#submit-order');
-    submit.onclick=()=>submitOrder(order,submit);
-    bindTransferOrder('donat/create', method => ({...orderPayload(order, method), expectedAmount:total(order)}),
-      () => loadCatalog(true));
-    sheetBody.querySelector('#donat-topup')?.addEventListener('click',()=>openTopup(()=>paymentSheet(order)));
+    const submit=sheetBody.querySelector('#submit-donat-payment');
+    const accept=sheetBody.querySelector('#accept-payment-terms');
+    let submitting=false;
+    const update=()=>{submit.disabled=submitting||!available(order.paymentMethod)||
+      (order.paymentMethod==='stars'&&!accept?.checked);};
+    sheetBody.querySelectorAll('[data-payment-choice]').forEach(button=>{
+      button.onclick=()=>{
+        if(submitting||button.disabled)return;
+        order.paymentMethod=button.dataset.paymentChoice;
+        paymentSheet(order);
+      };
+    });
+    accept?.addEventListener('change',update);
     sheetBody.querySelector('#back-product').onclick=()=>productSheet(order);
+    submit.onclick=async()=>{
+      if(submit.disabled||submitting)return;
+      submitting=true;update();
+      const method=order.paymentMethod;
+      const payload={...orderPayload(order,method),expectedAmount:total(order)};
+      if(method==='uzcard'||method==='humo'){
+        try{await startCardOrder(payload,submit,()=>loadCatalog(true));}
+        finally {submitting=false;if(submit.isConnected)update();}
+        return;
+      }
+      try {
+        const response=await api('donat/create',{...payload,acceptTerms:true});
+        if(!response.payment || response.payment.method!=='stars' ||
+          (response.payment.status==='pending'&&!response.payment.processing&&!response.payment.invoiceLink))
+          throw new Error('connection_error');
+        onStarsOrder(response.payment,()=>paymentSheet(order));
+        await syncState();
+      } catch(error){
+        if(error.message==='order_quote_changed'){
+          closeSheet();await loadCatalog(true);toast(t('quoteChanged'));
+        } else toast(t('error'));
+      } finally{
+        submitting=false;
+        if(submit.isConnected)update();
+      }
+    };
+    update();
   }
 
-  function orderPayload(order, paymentMethod = 'balance') {
+  function orderPayload(order, paymentMethod = 'stars') {
     const fields = {
       product: order.item.id,
       quantity: order.item.kind === 'quantity' ? order.quantity : undefined,
@@ -491,7 +532,7 @@ window.initArslanShop = function ({
       packs: order.item.max_packs ? order.packs : undefined,
       detail: order.detail
     };
-    const key = JSON.stringify(fields);
+    const key = JSON.stringify({...fields,paymentMethod});
     if (!order.requests.has(key)) {
       const bytes = crypto.getRandomValues(new Uint8Array(16));
       order.requests.set(key, Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join(''));
@@ -513,28 +554,6 @@ window.initArslanShop = function ({
       field.select();
       toast(t('copyHint'));
     }
-  }
-
-  async function submitOrder(order,submit) {
-    if(submit.disabled)return;
-    submit.disabled=true;
-    try {
-      await api('donat/create',{...orderPayload(order),expectedAmount:total(order)});
-      await syncState();
-      if(!submit.isConnected)return;
-      showHistory();
-      toast(t('paid'));
-    } catch(error) {
-      if(error.message==='insufficient_balance') {
-        await syncState();
-        if(submit.isConnected)paymentSheet(order);
-        toast(t('walletShort'));
-      } else if(error.message==='order_quote_changed'&&submit.isConnected) {
-        closeSheet();
-        loadCatalog(true);
-        toast(t('quoteChanged'));
-      } else if(submit.isConnected)toast(t('error'));
-    } finally {submit.disabled=false;}
   }
 
   function partnerPanel(html, heading = t('partner')) {
