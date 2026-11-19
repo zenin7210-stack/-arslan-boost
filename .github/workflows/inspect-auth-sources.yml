@@ -1,0 +1,35 @@
+name: Inspect auth modules in locked ARSLAN production baseline
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/inspect-auth-sources.yml]
+permissions: { contents: write }
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Inspect unchanged source files
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          mkdir -p /tmp/auth-sources
+          for name in telegram.mjs admins.mjs; do
+            unzip -p "$ZIP" "arslan-boost-cloudflare/src/$name" > "/tmp/auth-sources/$name"
+          done
+      - name: Publish nonsecret auth source code to inspection-only branch
+        run: |
+          set -euo pipefail
+          git config user.name github-actions-bot
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout --orphan staging-auth-inspect-20261119
+          git rm -rf --quiet . || true
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          mkdir src
+          cp /tmp/auth-sources/* src/
+          git add src
+          git commit -m "Inspect baseline authentication code"
+          git push --force origin HEAD:refs/heads/staging-auth-inspect-20261119
