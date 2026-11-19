@@ -444,7 +444,7 @@
         : kind === 'donat' && String(payment.donat_order_id) === String(item.id)));
     const stars = typeof tg?.openInvoice === 'function' &&
       starsPayment?.method === 'stars' && starsPayment.status === 'pending' &&
-      ['topup','order','donat'].includes(starsPayment.kind);
+      ['order','donat'].includes(starsPayment.kind);
     showSheet('history-entry', `<div class="checkout-summary">
       <div><strong>${escape(description)}</strong></div>
       ${kind === 'boost' && item.game_id ? '<div>ID: ' + escape(item.game_id) + '</div>' : ''}
