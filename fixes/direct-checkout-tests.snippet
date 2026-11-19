@@ -1,0 +1,69 @@
+
+test('DONAT Stars creates a genuine Telegram invoice and settles exactly once without touching wallet balances',async t=>{
+  t.mock.method(globalThis,'fetch',async(url,init)=>{
+    const method=url.split('/').at(-1);
+    return Response.json({ok:true,result:method==='createInvoiceLink'?'https://t.me/$donat-stars-test':true});
+  });
+  const system=app();
+  const payload={product:'spin_coins',option:'100',detail:'123456',expectedAmount:21990,
+    paymentMethod:'stars',acceptTerms:true,requestId:'donat-stars-direct-001'};
+  const before=(await system.api(1,'state')).data;
+  const result=await system.api(1,'donat/create',payload);
+  assert.equal(result.status,200);
+  assert.equal(result.data.status,'pending');
+  assert.equal(result.data.amount,21990);
+  assert.equal(result.data.payment.kind,'donat');
+  assert.equal(result.data.payment.method,'stars');
+  assert.equal(result.data.payment.stars,138);
+  assert.equal(result.data.payment.invoiceLink,'https://t.me/$donat-stars-test');
+  const payment=result.data.payment;
+  const replay=await system.api(1,'donat/create',payload);
+  assert.equal(replay.status,200);
+  assert.equal(replay.data.id,result.data.id);
+  assert.equal(replay.data.payment.id,payment.id);
+  const valid={from:{id:1},currency:'XTR',invoice_payload:'ab:'+payment.id,total_amount:138};
+  await system.webhook({pre_checkout_query:{...valid,id:'donat-checkout-001'}});
+  const paid={from:{id:1},chat:{type:'private'},successful_payment:{
+    ...valid,telegram_payment_charge_id:'donat-stars-charge-once'}};
+  await system.webhook({message:paid});
+  await system.webhook({message:paid});
+  await system.drain();
+  const after=(await system.api(1,'state')).data;
+  assert.equal(after.balance,before.balance);
+  assert.equal(after.starsBalance,before.starsBalance);
+  assert.equal((await system.api(1,'donat/state')).data.orders[0].status,'paid');
+  assert.equal(after.payments.find(p=>p.id===payment.id).status,'paid');
+  assert.equal(system.db.prepare("SELECT COUNT(*) AS n FROM payments WHERE kind='donat' AND method='stars'").get().n,1);
+  const paidAgain=await system.api(1,'donat/create',payload);
+  assert.equal(paidAgain.data.id,result.data.id);
+  assert.equal(paidAgain.data.status,'paid');
+});
+test('Only three direct payment methods: balance and new wallet top-ups are disabled without erasing old balances',async()=>{
+  const system=app();
+  const before=(await system.api(1,'state')).data;
+  const disabledStarsTopup=await system.api(1,'topup',{stars:10,starsRate:160,paymentMethod:'stars',acceptTerms:true,requestId:'no-topup-1'});
+  assert.deepEqual([disabledStarsTopup.status,disabledStarsTopup.data.error],[409,'topup_disabled']);
+  const disabledCardTopup=await system.api(1,'invoice',{amount:10000,method:'uzcard',requestId:'no-topup-2'});
+  assert.deepEqual([disabledCardTopup.status,disabledCardTopup.data.error],[409,'topup_disabled']);
+  const invalid=await system.api(1,'donat/create',{
+    product:'spin_coins',option:'100',detail:'123456',expectedAmount:21990,
+    paymentMethod:'balance',requestId:'no-balance-payment'});
+  assert.equal(invalid.data.error,'invalid_payment_method');
+  const after=(await system.api(1,'state')).data;
+  assert.deepEqual([after.balance,after.starsBalance],[before.balance,before.starsBalance]);
+});
+test('Existing confirmed P2P card order still creates a linked invoice without wallet prepayment',async()=>{
+  const system=app();
+  const data={product:'spin_coins',option:'100',detail:'123456',expectedAmount:21990,
+    paymentMethod:'uzcard',requestId:'donat-direct-card-order-001'};
+  const placed=await system.api(1,'donat/create',data);
+  assert.equal(placed.status,200);
+  assert.equal(placed.data.amount,21990);
+  assert.ok(placed.data.invoiceId>0);
+  const duplicate=await system.api(1,'donat/create',data);
+  assert.equal(duplicate.data.id,placed.data.id);
+  const check=await system.api(1,'invoice/'+placed.data.invoiceId+'/check',{});
+  assert.equal(check.data.status,'pending');
+  const wallet=(await system.api(1,'state')).data;
+  assert.equal(wallet.balance,0);
+});
