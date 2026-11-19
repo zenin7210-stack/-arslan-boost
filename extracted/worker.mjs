@@ -186,10 +186,30 @@ async function publicConfig(store, config) {
 async function handleApi(request, env, ctx, store, config, path) {
   if (path === "invoice" || path.startsWith("invoice/")) {
     if (/^invoice\/[0-9]{1,16}\/receipt$/.test(path)) return json({ error: "endpoint_missing" }, 404);
-    const user = await authenticate(request, env);
+    let user;
+    try {
+      user = await authenticate(request, env);
+    } catch (error) {
+      if (error instanceof RequestError) throw error;
+      throw new RequestError("p2p_auth_internal", 503);
+    }
     const data = request.method === "POST" ? await readObject(request) : {};
-    return json(await p2pApi(request, env, store, user, data, path,
-      id => background(ctx, sendManualReview(store, env, id))));
+    let result;
+    try {
+      result = await p2pApi(request, env, store, user, data, path,
+        id => background(ctx, sendManualReview(store, env, id)));
+    } catch (error) {
+      if (error instanceof RequestError) throw error;
+      const type = error?.name === "TypeError" ? "type" :
+        error?.name === "D1_ERROR" ? "database" : "other";
+      console.error("ARSLAN BOOST P2P handler exception category:", type);
+      throw new RequestError("p2p_handler_" + type + "_failed", 503);
+    }
+    try {
+      return json(result);
+    } catch {
+      throw new RequestError("p2p_response_failed", 503);
+    }
   }
   if (request.method === "GET") {
     if (path === "config") return json(await publicConfig(store, config));
