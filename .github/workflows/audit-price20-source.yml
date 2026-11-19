@@ -1,0 +1,33 @@
+name: Extract exact 20m release for offline audit
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/audit-price20-source.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: arslan-direct-order-tested
+          run-id: 44595628857
+          repository: zenin7210-stack/-arslan-boost
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+      - name: Reconstruct published version offline
+        run: |
+          set -euo pipefail
+          base64 -d fixes/pro-ui-payment-20261120.py.b64 > /tmp/ui.py
+          python3 /tmp/ui.py
+          python3 fixes/apply-price20.py release
+          python3 fixes/test-price20.py release
+          echo 'Source assembled for static inspection; no cloud changes.'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: audited-exact-20m-source
+          path: release
+          retention-days: 3
