@@ -1,0 +1,35 @@
+name: Inspect approved v3 history layout
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/history-assets-inspect.yml]
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract only public stylesheet and history markup
+        run: |
+          set -euo pipefail
+          ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          mkdir -p /tmp/history-layout
+          unzip -p "$ZIP" 'arslan-boost-cloudflare/public/app.css' > /tmp/history-layout/app.css
+          unzip -p "$ZIP" 'arslan-boost-cloudflare/public/index.html' > /tmp/history-layout/index.html
+          test -s /tmp/history-layout/app.css
+          test -s /tmp/history-layout/index.html
+      - name: Publish layout sources on isolated inspection branch
+        run: |
+          set -euo pipefail
+          git config user.name github-actions-bot
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git checkout --orphan staging-history-layout-20261119
+          git rm -rf --quiet . || true
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          mkdir public
+          cp /tmp/history-layout/* public/
+          git add public
+          git commit -m "Inspect existing history HTML and CSS for usability"
+          git push --force origin HEAD:refs/heads/staging-history-layout-20261119
