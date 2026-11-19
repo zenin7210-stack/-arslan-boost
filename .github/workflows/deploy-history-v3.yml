@@ -100,7 +100,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: boost-stars-v3-tested
+          name: arslan-history-v3-tested
           path: release/arslan-boost-cloudflare
       - uses: actions/setup-node@v4
         with:
