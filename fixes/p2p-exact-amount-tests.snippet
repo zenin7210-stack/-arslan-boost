@@ -142,7 +142,7 @@ test('bank invoice loading bypasses Stars checkout settings but still rejects un
 });
 
 test('unexpected auth/role runtime errors produce stable safe P2P error codes',async()=>{
-  const sys=app({ADMIN_IDS:{unexpected:'not-string'}});
+  const sys=app({P2P_USERS:{unexpected:'not-string'}});
   const res=await sys.api(1,'invoice/options',{});
   assert.equal(res.status,503);
   assert.equal(res.data.error,'p2p_handler_type_failed');
