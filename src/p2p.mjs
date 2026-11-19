@@ -197,8 +197,8 @@ function reserveInvoice(store, candidates, { userId, key, amount, method, time, 
 }
 async function quoteInvoice(store, env, user, data) {
   const amount=integer(data.amount,MIN_AMOUNT,MAX_AMOUNT);
-  // Recover old bank-check requests even when scheduled cleanup was delayed.
-  await expireInvoices(store, now(), env.P2P_MODE !== 'manual');
+  // Quotes must not mutate D1; old invoices are reconciled by the scheduled
+  // expiry process and again when a new invoice is actually created.
   const method=data.method;
   if(typeof method!=='string'||!METHOD.test(method))throw new RequestError('invalid_payment_method');
   const active=await store.first("SELECT * FROM invoices WHERE user_id=? AND status='pending' AND expires_at>?",user.id,now());
@@ -304,19 +304,34 @@ async function cancelUnpaidInvoice(store, env, userId, invoiceId) {
 export async function p2pApi(request, env, store, user, data, path, enqueueReview = () => {}) {
   requireAccess(env, user.id);
   if (path === "invoice/options" && request.method === "POST") {
-    // A stale checked_at request must not make the wallet inaccessible forever
-    // if the cron has not run. No paid transfer is cancelled by this cleanup.
-    await expireInvoices(store, now(), env.P2P_MODE !== 'manual');
-    const current = await store.first(`
-      SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?`, user.id, now());
-    const active = current?.order_payment_id ? null : current;
-    const latest = active ?? await store.first(`
-      SELECT * FROM invoices WHERE user_id = ? AND order_payment_id IS NULL ORDER BY id DESC LIMIT 1`, user.id);
-    const account = await store.first("SELECT p2p_balance FROM accounts WHERE user_id = ?", user.id);
-    return { balance: account?.p2p_balance ?? 0, minAmount: MIN_AMOUNT, maxAmount: MAX_AMOUNT,
-      methods: await p2pMethods(store, env),
-      active: active ? publicInvoice(env, active) : null,
-      latest: latest ? publicInvoice(env, latest) : null };
+    // Read-only request. A simple screen load must never depend on the
+    // expiry/settlement UPDATE batch, whose failure must not block the wallet.
+    // Expired invoices are displayed as expired by publicInvoice.
+    let phase = "current";
+    try {
+      const at = now();
+      const current = await store.first(`
+        SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?`,
+        user.id, at);
+      const active = current?.order_payment_id ? null : current;
+      phase = "latest";
+      const latest = active ?? await store.first(`
+        SELECT * FROM invoices WHERE user_id = ? AND order_payment_id IS NULL
+        ORDER BY id DESC LIMIT 1`, user.id);
+      phase = "account";
+      const account = await store.first("SELECT p2p_balance FROM accounts WHERE user_id = ?", user.id);
+      phase = "methods";
+      const methods = await p2pMethods(store, env);
+      phase = "format";
+      return { balance: account?.p2p_balance ?? 0, minAmount: MIN_AMOUNT, maxAmount: MAX_AMOUNT,
+        methods, active: active ? publicInvoice(env, active) : null,
+        latest: latest ? publicInvoice(env, latest) : null };
+    } catch (error) {
+      if (error instanceof RequestError) throw error;
+      console.error("ARSLAN BOOST invoice options failed at:", phase);
+      // Diagnosable and free of payment data, SQL and personal information.
+      throw new RequestError("p2p_options_" + phase + "_failed", 503);
+    }
   }
   if (path === "invoice/quote" && request.method === "POST") {
     return quoteInvoice(store, env, user, data);
