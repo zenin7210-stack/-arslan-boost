@@ -121,7 +121,7 @@ jobs:
           import hashlib,base64,lzma
           source=Path('releases/pro-20261120.patch.xz64.txt')
           data=lzma.decompress(base64.b64decode(''.join(source.read_text().split()),validate=True))
-          if hashlib.sha256(data).hexdigest()!='5dc9e848295a62d3fbecceff285d3ee23847a4e742768872ae62b0ae8c592913':
+          if hashlib.sha256(data).hexdigest()!='1080dd8ab93deca4335c03848b82ffd8e42d5e81c86bf83c274af1920d5b8516':
               raise RuntimeError('Professional patch checksum mismatch')
           Path('/tmp/pro.patch').write_bytes(data)
           PY
