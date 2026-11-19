@@ -159,9 +159,11 @@ async function paymentDetails(env, payment, { invoice = false, lang = "uz" } = {
     method: payment.method, status: payment.status, orderId: payment.order_id ?? payment.donat_order_id,
     processing: processing(payment),
   };
-  if (!invoice || payment.kind !== "topup" || result.status !== "pending" || result.processing) return result;
+  if (!invoice || payment.method !== "stars" || result.status !== "pending" || result.processing) return result;
   result.invoiceLink = await telegram(env, "createInvoiceLink", {
-    title: "ARSLAN BOOST", description: langText(lang, "Пополнение баланса", "Balansni to‘ldirish"),
+    title: "ARSLAN BOOST", description: payment.kind === "order"
+      ? langText(lang, "Оплата заказа BOOST", "BOOST buyurtmasi uchun to‘lov")
+      : langText(lang, "Пополнение баланса", "Balansni to‘ldirish"),
     payload: "ab:" + payment.id, provider_token: "", currency: "XTR",
     prices: [{ label: langText(lang, "Сумма", "Summa"), amount: payment.stars }],
   });
@@ -173,7 +175,8 @@ async function publicConfig(store, config) {
     arslanBoostApi: true,
     botUrl: config.name ? "https://t.me/" + config.name : null,
     supportUrl: config.support ? "https://t.me/" + config.support : null,
-    termsUrl: config.terms, starsRate: config.topupRate, orderStarsRate: 0, orderStarsMax: 0,
+    termsUrl: config.terms, starsRate: config.topupRate, orderStarsRate: config.topupRate,
+    orderStarsMax: config.topupRate ? Math.min(MAX_STARS, Math.floor(MAX_AMOUNT / config.topupRate)) : 0,
     starsMax: config.topupRate ? Math.min(MAX_STARS, Math.floor(MAX_AMOUNT / config.topupRate)) : 0,
     prices: PRICES, calibrationLegendPrice: CALIBRATION_LEGEND_PRICE,
     boostModeSurcharge: MODE_SURCHARGE, minBoostPrice: MIN_BOOST_PRICE, boostEta: await store.eta(),
@@ -225,13 +228,16 @@ async function handleApi(request, env, ctx, store, config, path) {
     case "donat/create": {
       const kind = path === "checkout" ? "order" : "donat";
       const byCard = data.paymentMethod === "uzcard" || data.paymentMethod === "humo";
-      if (!byCard && data.paymentMethod !== "balance") throw new RequestError("invalid_payment_method");
+      const byStars = kind === "order" && data.paymentMethod === "stars";
+      if (!byCard && !byStars && data.paymentMethod !== "balance") throw new RequestError("invalid_payment_method");
+      if (byStars) requireStars(data, config.topupRate);
       if (!byCard && !config.enabled) throw new RequestError("stars_not_configured", 503);
       const { order, payment, invoice } = byCard ? await createP2pOrder(store, env, user, kind, data)
-        : await store.createOrder(kind, user, data);
+        : await store.createOrder(kind, user, data, undefined, byStars ? config.topupRate : 0);
       const result = { id: order.id, amount: order.amount, status: order.status };
       if (kind === "order") result.boostEta = [order.eta_min_hours, order.eta_max_hours];
       if (invoice) result.invoiceId = invoice.id;
+      if (byStars) result.payment = await paymentDetails(env, payment, { invoice: true, lang: data.lang });
       if (payment.admin_notice_pending) background(ctx, sendNotice(env, store, payment.id));
       return json(result);
     }
@@ -292,8 +298,8 @@ async function handlePreCheckout(env, store, config, query) {
   await telegram(env, "answerPreCheckoutQuery", {
     pre_checkout_query_id: query.id, ok: reserved,
     ...(reserved ? {} : { error_message: langText(query.from?.language_code,
-      "Откройте новый счёт в разделе пополнения баланса.",
-      "Balansni to‘ldirish bo‘limida yangi hisob oching.") }),
+      "Откройте новый счёт и повторите оплату.",
+      "Yangi hisob ochib to‘lovni qayta urinib ko‘ring.") }),
   });
 }
 
