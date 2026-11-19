@@ -53,7 +53,7 @@ jobs:
           git show 'FETCH_HEAD:fixes/p2p-ui-auto-refresh.test.mjs' > release/arslan-boost-cloudflare/tests/p2p-ui-auto-refresh.test.mjs
           cd release/arslan-boost-cloudflare
           find src public -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
-      - name: Test full suite plus concurrent unique amounts and cancel flow
+      - name: Test full suite plus delayed bank events, exact amounts and cancel flow
         shell: bash
         working-directory: release/arslan-boost-cloudflare
         run: |
