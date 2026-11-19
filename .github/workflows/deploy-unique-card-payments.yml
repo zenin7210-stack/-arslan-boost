@@ -1,0 +1,211 @@
+name: ARSLAN BOOST apply tested P2P unique amounts with D1 safeguard
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/deploy-unique-card-payments.yml]
+permissions:
+  contents: read
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify locked source and unpack locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -q "$ZIP" -d release
+      - name: Merge only approved checkout and history sources, no secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin update/arslan-boost-next-20261119
+          for name in app.js worker.mjs store.mjs approved-ui.test.mjs p2p.js; do
+            case "$name" in
+              app.js) target=public/app.js ;;
+              worker.mjs) target=src/worker.mjs ;;
+              store.mjs) target=src/store.mjs ;;
+              approved-ui.test.mjs) target=tests/approved-ui.test.mjs ;;
+              p2p.js) target=public/assets/p2p.js ;;
+            esac
+            git show "FETCH_HEAD:extracted/$name" > "release/arslan-boost-cloudflare/$target"
+          done
+          for name in index.html app.css; do
+            git show "FETCH_HEAD:public/$name" > "release/arslan-boost-cloudflare/public/$name"
+          done
+          git show 'FETCH_HEAD:public/assets/p2p.css' > release/arslan-boost-cloudflare/public/assets/p2p.css
+          git show 'FETCH_HEAD:src/p2p.mjs' > release/arslan-boost-cloudflare/src/p2p.mjs
+          git show 'FETCH_HEAD:migrations/0012_requested_card_topup.sql' > release/arslan-boost-cloudflare/migrations/0012_requested_card_topup.sql
+          git show 'FETCH_HEAD:tests/history-ui.test.mjs' > release/arslan-boost-cloudflare/tests/history-ui.test.mjs
+          git show 'FETCH_HEAD:fixes/adjust-legacy-p2p-tests.mjs' > /tmp/adjust-p2p-tests.mjs
+          git show 'FETCH_HEAD:fixes/p2p-exact-amount-tests.snippet' > /tmp/p2p-amount-extra.snippet
+          git fetch --no-tags --depth=1 origin fix/boost-stars-2026-11-19
+          git show 'FETCH_HEAD:fixes/adapt-boost-stars-legacy-tests.mjs' > /tmp/adapt-stars-tests.mjs
+          git show 'FETCH_HEAD:fixes/boost-stars-extra-test.snippet' > /tmp/stars-extra.snippet
+          git show 'FETCH_HEAD:fixes/p2p-ui-auto-refresh.test.mjs' > release/arslan-boost-cloudflare/tests/p2p-ui-auto-refresh.test.mjs
+          cd release/arslan-boost-cloudflare
+          find src public -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+      - name: Test full suite plus delayed bank events, exact amounts and cancel flow
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        run: |
+          set -euo pipefail
+          node /tmp/adapt-stars-tests.mjs tests/p2p.test.mjs
+          node /tmp/adjust-p2p-tests.mjs tests/p2p.test.mjs
+          cat /tmp/stars-extra.snippet >> tests/p2p.test.mjs
+          cat /tmp/p2p-amount-extra.snippet >> tests/p2p.test.mjs
+          npm test
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const p2p=fs.readFileSync('public/assets/p2p.js','utf8');
+          const backend=fs.readFileSync('src/p2p.mjs','utf8');
+          const index=fs.readFileSync('public/index.html','utf8');
+          const css=fs.readFileSync('public/assets/p2p.css','utf8');
+          assert.match(p2p,/invoice\/quote/);
+          assert.match(p2p,/p2p-quote-banner/);
+          assert.match(p2p,/p2p-next-button/);
+          assert.match(p2p,/id="p2p-cancel-yes"/);
+          assert.match(p2p,/if \(invoice\.canCancel && invoice\.status === 'pending' && !invoice\.checkedAt\) renderCancel/);
+          assert.doesNotMatch(p2p,/id="p2p-latest"/);
+          assert.match(backend,/const TRANSFER_STEPS = \[0,100,200,300,400,500,600,700,800,900\]/);
+          assert.match(backend,/requested_amount/);
+          assert.match(index,/p2p\.js\?v=20261119-unique/);
+          assert.match(css,/#p2p-cancel-yes/);
+          console.log('PASS: exact sum preview, 100 UZS fallback, cancellation screen and cached UI assets');
+          JS
+      - name: Upload exactly tested Worker and Mini App sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: arslan-p2p-unique-tested
+          path: release/arslan-boost-cloudflare
+          if-no-files-found: error
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: arslan-p2p-unique-tested
+          path: release/arslan-boost-cloudflare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact production Worker and unchanged payment configuration
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN missing'; exit 1; }
+          node - <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict');
+          const cfg=JSON.parse(fs.readFileSync('wrangler.production.jsonc','utf8'));
+          assert.equal(cfg.name,'arslan-boost-bot');
+          assert.equal(cfg.d1_databases?.[0]?.database_name,'arslan-boost-payments');
+          assert.equal(cfg.vars?.BOT_USERNAME,'arslanboostbot');
+          assert.equal(cfg.vars?.ENABLE_PAYMENTS,'1');
+          assert.equal('P2P_MODE' in (cfg.vars||{}),false);
+          assert.equal(fs.readdirSync('migrations').filter(f=>f.endsWith('.sql')).at(-1),'0012_requested_card_topup.sql');
+          assert.match(fs.readFileSync('migrations/0012_requested_card_topup.sql','utf8'),/ALTER TABLE invoices/);
+          assert.match(fs.readFileSync('public/index.html','utf8'),/p2p\.js\?v=20261119-unique/);
+          JS
+      - name: Read D1 migration ledger and existing safeguards (no changes)
+        id: p2p_schema
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id' > /tmp/p2p_schema_ledger.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('invoices','accounts','p2p_incoming','p2p_match_incoming','p2p_settle_on_paid','p2p_paid_requires_bank_event','settle_order_payment','arslan_one_active_boost')" > /tmp/p2p_schema_names.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM pragma_table_info('invoices') WHERE name IN ('base_amount','unique_amount','requested_amount')" > /tmp/p2p_schema_columns.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const rows=p=>(Array.isArray(JSON.parse(fs.readFileSync(p,'utf8')))?JSON.parse(fs.readFileSync(p,'utf8')):[JSON.parse(fs.readFileSync(p,'utf8'))]).flatMap(x=>x.results||[]);
+          const old=[
+            '0001_checkout.sql','0002_p2p.sql','0003_partners.sql','0004_telegram_entry.sql',
+            '0005_checkout_webhook.sql','0006_exact_transfer_amount.sql','0007_miniapp_receipt_upload.sql',
+            '0008_transfer_orders.sql','0009_bank_confirmation.sql','0010_manual_approval.sql',
+            '0011_safe_order_flow.sql'
+          ];
+          const latest=[...old,'0012_requested_card_topup.sql'];
+          const ledger=rows('/tmp/p2p_schema_ledger.json').map(x=>x.name);
+          const needs=JSON.stringify(ledger)===JSON.stringify(old);
+          if(!needs&&JSON.stringify(ledger)!==JSON.stringify(latest))
+            throw Error('Unexpected D1 migration ledger; deploy stopped');
+          const names=new Set(rows('/tmp/p2p_schema_names.json').map(x=>x.name));
+          const required=['invoices','accounts','p2p_incoming','p2p_match_incoming','p2p_settle_on_paid',
+            'p2p_paid_requires_bank_event','settle_order_payment','arslan_one_active_boost'];
+          for(const name of required)if(!names.has(name))throw Error('Missing payment safeguard: '+name);
+          const cols=new Set(rows('/tmp/p2p_schema_columns.json').map(x=>x.name));
+          if(!cols.has('base_amount')||!cols.has('unique_amount')||
+            cols.has('requested_amount')===needs)throw Error('Unexpected invoices schema before deploy');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,'needs_migration='+needs+'\n');
+          console.log(needs?'Verified old D1: only nullable column migration required':'D1 already has exact requested sum column');
+          JS
+      - name: Record recovery bookmark before D1 change
+        if: steps.p2p_schema.outputs.needs_migration == 'true'
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments --config wrangler.production.jsonc
+      - name: Apply only additive nullable requested_amount migration
+        if: steps.p2p_schema.outputs.needs_migration == 'true'
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 migrations apply arslan-boost-payments --remote --config wrangler.production.jsonc
+      - name: Verify migrated production schema before Worker deployment
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM pragma_table_info('invoices') WHERE name = 'requested_amount'" > /tmp/p2p_added_column.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' > /tmp/p2p_last_migration.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const rows=p=>(Array.isArray(JSON.parse(fs.readFileSync(p,'utf8')))?JSON.parse(fs.readFileSync(p,'utf8')):[JSON.parse(fs.readFileSync(p,'utf8'))]).flatMap(x=>x.results||[]);
+          if(rows('/tmp/p2p_added_column.json')[0]?.name!=='requested_amount')
+            throw Error('D1 requested_amount column missing: refuse Worker rollout');
+          if(rows('/tmp/p2p_last_migration.json')[0]?.name!=='0012_requested_card_topup.sql')
+            throw Error('D1 migration ledger mismatch: refuse Worker rollout');
+          console.log('D1 additive change verified; previous invoices and balances preserved');
+          JS
+      - name: Deploy tested Mini App and Worker, preserving all card/payment secrets
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo '::notice::ARSLAN BOOST card payment UX, +100 UZS wallet allocations, and safe cancellation deployed.'
