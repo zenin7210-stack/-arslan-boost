@@ -45,7 +45,7 @@ jobs:
             ['exact transfer quote banner',js.includes('p2p-quote-banner')],
             ['compact occupancy hint',js.includes('p2p-quote-alert')],
             ['payment back cancellation warning',js.includes("renderCancel();")],
-            ['original gradient',css.includes('#p2p-next')],
+            ['original gradient',css.includes('.p2p-next-button')&&css.includes('linear-gradient(104deg')],
             ['cancel illustration',css.includes('p2p-cancel-icon')],
             ['genuine Telegram payment backend',health.paymentsEnabled===true]
           ];
