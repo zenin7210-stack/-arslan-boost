@@ -497,14 +497,17 @@ window.initArslanShop = function ({
     sheetBody.querySelector('#back-product').onclick=()=>productSheet(order);
     submit.onclick=async()=>{
       if(submit.disabled||submitting)return;
-      submitting=true;update();
       const method=order.paymentMethod;
       const payload={...orderPayload(order,method),expectedAmount:total(order)};
       if(method==='uzcard'||method==='humo'){
+        // The shared card checkout disables its own button at the start.
+        // Never pre-disable it here or requestTransfer will silently abort.
+        submitting=true;
         try{await startCardOrder(payload,submit,()=>loadCatalog(true));}
         finally {submitting=false;if(submit.isConnected)update();}
         return;
       }
+      submitting=true;update();
       try {
         const response=await api('donat/create',{...payload,acceptTerms:true});
         if(!response.payment || response.payment.method!=='stars' ||
