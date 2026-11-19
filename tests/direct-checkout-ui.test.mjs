@@ -30,7 +30,7 @@ test('No new wallet top-up endpoints, old invoices and balances remain inspectab
   assert.match(p2p,/path === "invoice\/quote" \|\| path === "invoice"/);
   assert.match(app,/balance-readonly/);
   assert.match(app,/browse-products/);
-  assert.match(worker,/path === "invoice\/recover"/);
+  assert.match(p2p,/path === "invoice\/recover"/);
 });
 test('DONAT Stars orders have genuine Telegram invoice and atomic settlement',()=>{
   assert.match(worker,/const byStars = data\.paymentMethod === "stars"/);
@@ -44,5 +44,5 @@ test('Existing payment records, admin fulfillment and card safety guards remain'
   assert.match(worker,/case "donat\/state"/);
   assert.match(worker,/sendNotice\(/);
   assert.match(p2p,/p2p_settle_on_paid|createP2pOrder/);
-  assert.match(app,/invoice\.canCancel/);
+  assert.match(readFileSync(new URL('../public/assets/p2p.js',import.meta.url),'utf8'),/invoice\.canCancel/);
 });
