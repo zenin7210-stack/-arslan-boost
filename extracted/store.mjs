@@ -91,7 +91,7 @@ export class Store {
                      FROM donat_orders WHERE user_id = ? ORDER BY id DESC LIMIT 100`, userId);
   }
 
-  async createOrder(kind, user, data, transfer) {
+  async createOrder(kind, user, data, transfer, starsRate = 0) {
     const definition = orderTables[kind];
     const { table, column } = definition;
     const method = data.paymentMethod;
@@ -113,6 +113,11 @@ export class Store {
       return { order: saved, payment, invoice };
     }
     checkOrderQuote(data, info.amount);
+    const stars = method === "stars" ? Math.ceil(info.amount / starsRate) : 0;
+    if (method === "stars" && (kind !== "order" || !Number.isSafeInteger(starsRate) ||
+        starsRate <= 0 || !Number.isSafeInteger(stars) || stars < 1 || stars > MAX_STARS)) {
+      throw new RequestError("stars_not_configured", 503);
+    }
     const lang = data.lang === "ru" ? "ru" : "uz";
     const status = method === "balance" ? "paid" : "pending";
     const created = utc();
@@ -146,12 +151,12 @@ export class Store {
         ...(transfer ? [transfer.expire, transfer.reserve] : []),
         insert,
         this.stmt(`
-          INSERT INTO payments (user_id, ${column}, kind, method, amount, status,
+          INSERT INTO payments (user_id, ${column}, kind, method, amount, stars, status,
               request_key, created_at, admin_notice_pending)
-          SELECT user_id, id, ?, ?, amount, status, ? || id, created_at, ? ${byKey}
+          SELECT user_id, id, ?, ?, amount, ?, status, ? || id, created_at, ? ${byKey}
           AND ${definition.method} = ? AND status = ? AND amount = ?
           ON CONFLICT (${column}) DO NOTHING`,
-          kind, method, kind + ":", Number(status === "paid"),
+          kind, method, stars, kind + ":", Number(status === "paid"),
           user.id, key, method, status, info.amount),
       ];
       if (transfer) {
@@ -231,7 +236,7 @@ export class Store {
     const now = epoch();
     return this.first(`
       UPDATE payments SET checkout_query_id = ?, checkout_reserved_at = ?
-      WHERE id = ? AND user_id = ? AND kind = 'topup' AND method = 'stars' AND stars = ? AND status = 'pending'
+      WHERE id = ? AND user_id = ? AND kind IN ('topup','order') AND method = 'stars' AND stars = ? AND status = 'pending'
       AND (checkout_query_id IS NULL OR checkout_query_id = ? OR checkout_reserved_at <= ?)
       RETURNING id`,
       queryId, now, id, userId, stars, queryId, now - RESERVATION_SECONDS);
