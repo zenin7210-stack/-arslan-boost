@@ -250,6 +250,8 @@ async function handleApi(request, env, ctx, store, config, path) {
       const kind = path === "checkout" ? "order" : "donat";
       const byCard = data.paymentMethod === "uzcard" || data.paymentMethod === "humo";
       const byStars = data.paymentMethod === "stars";
+      // Stars remains available for BOOST, but not for new DONAT SHOP orders.
+      if (kind === "donat" && byStars) throw new RequestError("invalid_payment_method",409);
       if (!byCard && !byStars) throw new RequestError("invalid_payment_method");
       if (byStars) requireStars(data, config.topupRate);
       if (byStars && !config.enabled) throw new RequestError("stars_not_configured", 503);
