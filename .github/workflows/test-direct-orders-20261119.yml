@@ -1,4 +1,4 @@
-name: Verify final direct DONAT Stars and card checkout without wallet
+name: Verify final three-method direct checkout with strict wallet cutoff
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
