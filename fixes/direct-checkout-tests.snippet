@@ -137,7 +137,7 @@ test('old unstarted DONAT Stars checkout no longer blocks fresh UZCARD order',as
   assert.equal(system.db.prepare('SELECT status FROM donat_orders WHERE id=?').get(old.id).status,'cancelled');
   assert.equal(system.db.prepare('SELECT status FROM donat_orders WHERE id=?').get(result.data.id).status,'pending');
 });
-test('prechecked Stars payment is never cancelled, and invalid new order does not clear old Stars',async()=>{
+test('prechecked Stars payment is preserved, but independent bank order is permitted',async()=>{
   const system=app();
   const date=new Date().toISOString();
   const old=system.db.prepare(`INSERT INTO donat_orders
@@ -146,11 +146,12 @@ test('prechecked Stars payment is never cancelled, and invalid new order does no
   const payment=system.db.prepare(`INSERT INTO payments
     (user_id,donat_order_id,kind,method,amount,stars,status,request_key,created_at,checkout_query_id,checkout_reserved_at)
     VALUES (1,?,'donat','stars',21990,138,'pending','prechecked-stars-payment',?,'tg-checkout-already-started',?) RETURNING id`).get(old.id,date,Math.floor(Date.now()/1000));
-  const blocked=await system.api(1,'donat/create',{
+  const another=await system.api(1,'donat/create',{
     product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
-    paymentMethod:'uzcard',requestId:'gold-should-remain-blocked'
+    paymentMethod:'uzcard',requestId:'gold-should-not-be-blocked'
   });
-  assert.equal(blocked.status,409);
+  assert.equal(another.status,200,JSON.stringify(another.data));
+  assert.ok(another.data.invoiceId);
   assert.equal(system.db.prepare('SELECT status FROM payments WHERE id=?').get(payment.id).status,'pending');
   assert.equal(system.db.prepare('SELECT status FROM donat_orders WHERE id=?').get(old.id).status,'pending');
 
@@ -162,4 +163,35 @@ test('prechecked Stars payment is never cancelled, and invalid new order does no
   });
   assert.equal(invalid.status,409);
   assert.equal(system.db.prepare('SELECT status FROM payments WHERE id=?').get(payment.id).status,'pending');
+});
+
+test('a paid but unfulfilled previous order never blocks a new order',async()=>{
+  const system=app();
+  const old=system.db.prepare(`INSERT INTO donat_orders
+    (user_id,username,product,option_code,option_label,detail,amount,method,lang,status,request_key,created_at)
+    VALUES (1,'tester','spin_coins','100','100 Spin Coins','123456',21990,'stars','uz','paid','prior-fulfilled-later',?) RETURNING id`).get(new Date().toISOString());
+  const created=await system.api(1,'donat/create',{
+    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
+    paymentMethod:'uzcard',requestId:'new-purchase-despite-paid'
+  });
+  assert.equal(created.status,200,JSON.stringify(created.data));
+  assert.equal(system.db.prepare('SELECT status FROM donat_orders WHERE id=?').get(old.id).status,'paid');
+  assert.ok(created.data.invoiceId>0);
+});
+test('bank transfer limit remains one active per customer even with many orders',async()=>{
+  const system=app();
+  const base={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
+  const first=await system.api(1,'donat/create',{...base,requestId:'first-bank-intent'});
+  assert.equal(first.status,200);
+  const second=await system.api(1,'donat/create',{...base,requestId:'second-bank-intent'});
+  assert.equal(second.status,409);
+  assert.ok(['p2p_invoice_in_progress','p2p_amount_unavailable'].includes(second.data.error),second.data.error);
+  assert.equal(system.db.prepare("SELECT COUNT(*) n FROM invoices WHERE user_id=1 AND status='pending'").get().n,1);
+  const oldInvoice=system.db.prepare('SELECT * FROM invoices WHERE id=?').get(first.data.invoiceId);
+  assert.ok(oldInvoice.unique_amount>=11990);
+  const cancel=await system.api(1,'invoice/'+first.data.invoiceId+'/cancel',{});
+  assert.equal(cancel.status,200);
+  const retry=await system.api(1,'donat/create',{...base,requestId:'second-bank-intent'});
+  assert.equal(retry.status,200,JSON.stringify(retry.data));
+  assert.notEqual(retry.data.invoiceId,first.data.invoiceId);
 });
