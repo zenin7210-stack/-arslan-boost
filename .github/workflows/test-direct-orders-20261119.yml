@@ -1,4 +1,4 @@
-name: Pinpoint D1 bank trigger failure in synthetic settlement fixture
+name: Verify bank event links only to correct +100 order after 0013 migration
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
