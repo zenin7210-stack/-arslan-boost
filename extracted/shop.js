@@ -466,11 +466,11 @@ window.initArslanShop = function ({
   }
 
   function paymentSheet(order) {
-    const available = method => connected() && paymentReady(method);
+    const available = method => method !== 'stars' && connected() && paymentReady(method);
     const method=order.paymentMethod && available(order.paymentMethod) ? order.paymentMethod
-      : ['uzcard','humo','stars'].find(available) || 'stars';
+      : ['uzcard','humo'].find(available) || 'uzcard';
     order.paymentMethod=method;
-    const terms=method==='stars' ? paymentTermsHtml(available('stars')) : '';
+    const terms='';
     openSheet(t('pay'),`
       <p><strong>${escape(order.item.title)}</strong> · ${escape(packageName(order))}</p>
       ${priceSummary(total(order))}
