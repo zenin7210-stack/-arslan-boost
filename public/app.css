@@ -399,3 +399,9 @@ body::before {
 #history .history-row .history-amount{margin:0;color:#f5fbff;font-size:12px;font-weight:750;white-space:nowrap}
 #history .history-row .history-chevron{color:#709bbd;font-size:21px;line-height:1}
 @media(max-width:375px){#history .history-row{grid-template-columns:36px minmax(0,1fr) auto;gap:8px;padding:10px 8px}#history .history-row .txn-icon{width:35px;height:35px}#history .history-row .history-side{min-width:77px}#history .history-row .history-amount{font-size:11px}#history .history-filters .chip{padding:8px 11px}}
+
+/* Direct order checkout: unavailable card methods remain visible but not clickable. */
+.arslan-payment-grid .arslan-payment-tile:disabled{opacity:.46;filter:saturate(.65);cursor:not-allowed;box-shadow:none}
+.arslan-payment-grid .arslan-payment-tile:disabled.selected{border-color:#284765}
+.donat-payment-picker{margin:15px 0 10px}
+.donat-payment-note{margin:9px 0 14px;color:#a6bfd5;font-size:12px;line-height:1.45}
