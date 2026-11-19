@@ -114,7 +114,7 @@ export class Store {
     }
     checkOrderQuote(data, info.amount);
     const stars = method === "stars" ? Math.ceil(info.amount / starsRate) : 0;
-    if (method === "stars" && (kind !== "order" || !Number.isSafeInteger(starsRate) ||
+    if (method === "stars" && (!Number.isSafeInteger(starsRate) ||
         starsRate <= 0 || !Number.isSafeInteger(stars) || stars < 1 || stars > MAX_STARS)) {
       throw new RequestError("stars_not_configured", 503);
     }
@@ -236,7 +236,7 @@ export class Store {
     const now = epoch();
     return this.first(`
       UPDATE payments SET checkout_query_id = ?, checkout_reserved_at = ?
-      WHERE id = ? AND user_id = ? AND kind IN ('topup','order') AND method = 'stars' AND stars = ? AND status = 'pending'
+      WHERE id = ? AND user_id = ? AND kind IN ('topup','order','donat') AND method = 'stars' AND stars = ? AND status = 'pending'
       AND (checkout_query_id IS NULL OR checkout_query_id = ? OR checkout_reserved_at <= ?)
       RETURNING id`,
       queryId, now, id, userId, stars, queryId, now - RESERVATION_SECONDS);
