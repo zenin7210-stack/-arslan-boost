@@ -35,6 +35,7 @@
       quoteHint:'Если сумма занята, система предложит ближайшую свободную. Уточните сумму на следующем экране.',
       creditedAll:'На баланс будет зачислено',
       retryLoading:'Повторить загрузку', accessDenied:'Оплата картой сейчас недоступна для этого аккаунта.',
+      errorCode:'Код ошибки',
     },
     uz: {
       wallet: 'Karta orqali to‘ldirish', balance: 'O‘tkazmalar balansi', amount: 'To‘ldirish summasi',
@@ -70,6 +71,7 @@
       quoteHint:'Summa band bo‘lsa, tizim yaqin bo‘sh summani tanlaydi. Aniq summa keyingi oynada tasdiqlanadi.',
       creditedAll:'Balansga tushadigan summa',
       retryLoading:'Qayta yuklash', accessDenied:'Karta orqali to‘lov ushbu akkaunt uchun hozircha mavjud emas.',
+      errorCode:'Xato kodi',
     },
   };
 
@@ -100,13 +102,29 @@
     }
 
     function warning(error) {
+      const code = typeof error?.message === 'string' && /^[a-z][a-z0-9_]{1,60}$/.test(error.message)
+        ? error.message : error?.name === 'TimeoutError' ? 'network_timeout' : 'network_error';
       const text = {
         p2p_method_unavailable: 'unavailable', p2p_amount_unavailable: 'amountUnavailable',
         p2p_disabled: 'accessDenied', p2p_invoice_in_progress: 'inProgress',
-      }[error?.message] || 'error';
+      }[code] || 'error';
+      const detail = ['p2p_method_unavailable','p2p_amount_unavailable','p2p_invoice_in_progress'].includes(code)
+        ? '' : ' · '+t('errorCode')+': '+code;
       const target = within('.p2p-feedback');
-      if (target) target.textContent = t(text);
-      else ui.toast(t(text));
+      if (target) target.textContent = t(text)+detail;
+      else ui.toast(t(text)+detail);
+    }
+    async function loadOptionsSafely() {
+      let last;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { return await ui.api('invoice/options', {}); }
+        catch (error) {
+          last = error;
+          if (attempt || !['connection_error','service_unavailable'].includes(error?.message)) throw error;
+          await new Promise(resolve => setTimeout(resolve, 450));
+        }
+      }
+      throw last;
     }
 
     function copy(button, text) {
@@ -508,7 +526,7 @@
       returnTo = ui.back;
       const version = showLoading(() => open(preferredMethod));
       try {
-        options = await ui.api('invoice/options', {});
+        options = await loadOptionsSafely();
         if (!active(version)) return;
         invoice = options.active;
         deadline = 0;
@@ -529,7 +547,7 @@
       returnTo = typeof back === 'function' ? back : ui.back;
       const version = showLoading(() => start(selectedAmount, selectedMethod, back));
       try {
-        options = await ui.api('invoice/options', {});
+        options = await loadOptionsSafely();
         if (!active(version)) return;
         if (!options.methods.includes(selectedMethod)) throw new Error('p2p_method_unavailable');
         if (!Number.isSafeInteger(selectedAmount) || selectedAmount < options.minAmount || selectedAmount > options.maxAmount)
