@@ -1,4 +1,4 @@
-name: Diagnose bank event on alternative +100 UZS invoice
+name: Validate D1 settlement trigger for alternate +100 order amount
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -37,6 +37,7 @@ jobs:
           done
           git show FETCH_HEAD:public/assets/p2p.css > release/arslan-boost-cloudflare/public/assets/p2p.css
           git show FETCH_HEAD:migrations/0012_requested_card_topup.sql > release/arslan-boost-cloudflare/migrations/0012_requested_card_topup.sql
+          git show FETCH_HEAD:migrations/0013_order_exact_amount.sql > release/arslan-boost-cloudflare/migrations/0013_order_exact_amount.sql
           git show FETCH_HEAD:tests/direct-checkout-ui.test.mjs > release/arslan-boost-cloudflare/tests/approved-ui.test.mjs
           git show FETCH_HEAD:tests/history-ui.test.mjs > release/arslan-boost-cloudflare/tests/history-ui.test.mjs
           git show FETCH_HEAD:fixes/retire-wallet-topup-tests.mjs > /tmp/retire-wallet-tests.mjs
