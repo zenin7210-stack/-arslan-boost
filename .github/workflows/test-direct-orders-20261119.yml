@@ -1,4 +1,4 @@
-name: Verify parallel orders, bank invoice isolation and payment safety
+name: Recheck multi-order constraints and bank event idempotency
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
