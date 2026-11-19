@@ -1,0 +1,50 @@
+name: Read-only P2P verification and code extraction
+on:
+  push:
+    branches: [audit/auto-card-20261119]
+    paths: [.github/workflows/p2p-readonly-audit.yml]
+permissions:
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify v3 source checksum and test P2P with local in-memory database
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -q "$ZIP" -d release
+          cd release/arslan-boost-cloudflare
+          npm test
+      - name: Extract payment processing sources for review, exclude env and secret files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/arslan-audit
+          cp release/arslan-boost-cloudflare/src/p2p.mjs /tmp/arslan-audit/p2p.mjs
+          cp release/arslan-boost-cloudflare/src/p2p-notice.mjs /tmp/arslan-audit/p2p-notice.mjs
+          cp release/arslan-boost-cloudflare/tests/p2p.test.mjs /tmp/arslan-audit/p2p.test.mjs
+          cp release/arslan-boost-cloudflare/src/store.mjs /tmp/arslan-audit/store.mjs
+          cp release/arslan-boost-cloudflare/src/catalog.mjs /tmp/arslan-audit/catalog.mjs
+          find /tmp/arslan-audit -type f -print
+      - name: Write audit-only branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions-bot
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git checkout --orphan audit-p2p-source-20261119
+          git rm -rf --quiet . || true
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          mkdir -p audit-src
+          cp /tmp/arslan-audit/* audit-src/
+          git add audit-src
+          git commit -m "Audit-only P2P payment sources (no secrets)"
+          git push --force origin HEAD:refs/heads/audit-p2p-source-20261119
