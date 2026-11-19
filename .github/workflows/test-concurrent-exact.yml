@@ -1,0 +1,82 @@
+name: ARSLAN BOOST — concurrent exact amount staging tests
+on:
+  push:
+    branches: [fix/concurrent-exact-20261120]
+    paths:
+      - fixes/concurrent_release.patch.gz.b64
+      - .github/workflows/test-concurrent-exact.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          name: arslan-direct-order-tested
+          run-id: 44595628857
+          repository: zenin7210-stack/-arslan-boost
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+      - name: Reproduce last deployed source and check immutable hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            '8ef30201f0b9a60fe8ed1f5abef4aa89868d3d60dc279108f28dd058097628ef' release/src/worker.mjs \
+            'b32c780233bad0af22fac1c5f6b7d7d14be8451e790840d89db627cacd97d030' release/src/p2p.mjs \
+            '5abec56a8932e47a849b4b81e9fb3157a4c4a6d6224174e75371f9477cc707f0' release/wrangler.production.jsonc | sha256sum --check
+          base64 -d fixes/pro-ui-payment-20261120.py.b64 > /tmp/base-ui.py
+          python3 /tmp/base-ui.py
+          python3 fixes/apply-price20.py release
+          python3 fixes/test-price20.py release
+          printf '%s  %s\n' \
+            'f15edeedfb1fc0819560e6a6d8223d0ffcbac2f3e1045c9ec7d94018d0bb2181' release/src/p2p.mjs \
+            'f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768' release/public/assets/p2p.js \
+            '8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44' release/public/index.html \
+            '91d037ceffb037517e827d438b24dd17534330394914ed9a53c49727ccf43af4' release/tests/p2p.test.mjs | sha256sum --check
+      - name: Apply concurrent patch only to exact baseline
+        run: |
+          set -euo pipefail
+          base64 -d fixes/concurrent_release.patch.gz.b64 | gzip -d > /tmp/concurrent.patch
+          printf '%s  %s\n' '2b06b1c6f042659f35b0f2425dd502597c1818a69f8b48664e31c58732e33f6c' /tmp/concurrent.patch | sha256sum --check
+          cd release
+          patch --batch --fuzz=0 -p1 < /tmp/concurrent.patch
+          printf '%s  %s\n' \
+            '827a13e07686b15a7236f0020e36801290dbbffbfbb0f92a2b674d25bc474938' src/p2p.mjs \
+            'f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058' public/assets/p2p.js \
+            '9863853bd19cab3be973a8d0df4c37eb72f22fba3d3c140a15d42acca7c33c65' public/index.html \
+            '6983a12324e1538944949f7a70e6b389a16666aede8f4ba9a0506eb6bee6d1be' tests/p2p.test.mjs \
+            '545446107883fda4c2d26ea082de5168660738430f2e0f9360d8b37d7764e3d0' migrations/0015_concurrent_exact_amounts.sql | sha256sum --check
+      - name: Check JavaScript, full tests and SQLite migration integrity
+        working-directory: release
+        run: |
+          set -euo pipefail
+          find src public -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          npm test
+          node --input-type=module <<'JS'
+          import { DatabaseSync } from 'node:sqlite';
+          import { readdirSync,readFileSync } from 'node:fs';
+          const db=new DatabaseSync(':memory:');
+          for(const file of readdirSync('migrations').filter(f=>f.endsWith('.sql')).sort())
+            db.exec(readFileSync('migrations/'+file,'utf8'));
+          const names=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='index' OR type='trigger'").all().map(x=>x.name));
+          if(names.has('p2p_unique_pending'))throw Error('Global amount block survived');
+          for(const expected of ['p2p_one_open_invoice','p2p_one_invoice_per_order','p2p_pending_card_amount','p2p_paid_requires_bank_event','p2p_settle_on_paid'])
+            if(!names.has(expected))throw Error('Missing settlement safety '+expected);
+          if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migration FK error');
+          console.log('PASS migration 0015: other uniqueness and bank proof preserved');
+          JS
+      - name: Save staged tested code, never deploy
+        uses: actions/upload-artifact@v4
+        with:
+          name: arslan-concurrent-exact-staged
+          path: release
+          retention-days: 7
