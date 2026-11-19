@@ -1,0 +1,123 @@
+name: One-shot live P2P failure isolation (secret-gated, read-only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/diagnose-live-p2p-once.yml]
+permissions:
+  contents: read
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 17
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Assemble verified sources without customer data
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -q "$ZIP" -d release
+          git fetch --no-tags --depth=1 origin update/arslan-boost-next-20261119
+          for name in app.js worker.mjs store.mjs approved-ui.test.mjs p2p.js; do
+            case "$name" in
+              app.js) target=public/app.js ;;
+              worker.mjs) target=src/worker.mjs ;;
+              store.mjs) target=src/store.mjs ;;
+              approved-ui.test.mjs) target=tests/approved-ui.test.mjs ;;
+              p2p.js) target=public/assets/p2p.js ;;
+            esac
+            git show "FETCH_HEAD:extracted/$name" > "release/arslan-boost-cloudflare/$target"
+          done
+          for name in index.html app.css; do
+            git show "FETCH_HEAD:public/$name" > "release/arslan-boost-cloudflare/public/$name"
+          done
+          git show FETCH_HEAD:public/assets/p2p.css > release/arslan-boost-cloudflare/public/assets/p2p.css
+          git show FETCH_HEAD:src/p2p.mjs > release/arslan-boost-cloudflare/src/p2p.mjs
+          cd release/arslan-boost-cloudflare
+          node --check src/worker.mjs
+          node --check src/p2p.mjs
+          grep -q 'if (path === "/_internal/diagnose-invoice"' src/worker.mjs
+          grep -q 'invoice/recover' src/p2p.mjs
+          node - <<'JS'
+          const fs=require('fs'),assert=require('node:assert/strict');
+          const cfg=JSON.parse(fs.readFileSync('wrangler.production.jsonc','utf8'));
+          assert.equal(cfg.name,'arslan-boost-bot');
+          assert.equal(cfg.d1_databases?.[0]?.database_name,'arslan-boost-payments');
+          JS
+      - name: Generate ephemeral masked diagnostic secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          CODE="$(openssl rand -hex 32)"
+          echo "::add-mask::$CODE"
+          echo "ARSLAN_DIAG_CODE=$CODE" >> "$GITHUB_ENV"
+      - name: Set protected diagnostic secret
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$ARSLAN_DIAG_CODE" | npx --yes wrangler@4 secret put ARSLAN_DIAG_TOKEN --config wrangler.production.jsonc
+      - name: Deploy temporary read-only diagnostic
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+      - name: Invoke authenticated server-side P2P options, log sanitized result
+        working-directory: release/arslan-boost-cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL=https://arslan-boost-bot.zenin7210.workers.dev
+          CODE="$(curl --silent --show-error --max-time 25 -o /tmp/diag_result.json -w '%{http_code}' \
+            --request POST --header "X-Arslan-Diagnostic: $ARSLAN_DIAG_CODE" "$URL/_internal/diagnose-invoice")"
+          DIAG_HTTP="$CODE" node - <<'JS'
+          const fs=require('fs');
+          const data=JSON.parse(fs.readFileSync('/tmp/diag_result.json','utf8'));
+          console.log('Live authenticated diagnostic status:', process.env.DIAG_HTTP);
+          console.log('Live authenticated diagnostic:',JSON.stringify(data));
+          if(![200,503].includes(Number(process.env.DIAG_HTTP))) throw Error('Diagnostic route not authorized or failed');
+          JS
+      - name: Delete ephemeral diagnostic secret
+        if: always()
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$ARSLAN_DIAG_CODE" ]; then
+            printf 'y\n' | npx --yes wrangler@4 secret delete ARSLAN_DIAG_TOKEN --config wrangler.production.jsonc
+          fi
+      - name: Remove diagnostic route from published Worker
+        if: always()
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'JS'
+          const fs=require('fs');
+          const p='src/worker.mjs', s=fs.readFileSync(p,'utf8');
+          const a=s.indexOf('      if (path === "/_internal/diagnose-invoice"');
+          const b=s.indexOf('      if (/^\\/relay\\/(humo|uzcard|cardxabar)$/.test(path)) {',a);
+          if(a<0||b<=a)throw Error('Refusing unsafe diagnostic cleanup');
+          fs.writeFileSync(p,s.slice(0,a)+s.slice(b));
+          JS
+          node --check src/worker.mjs
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo '::notice::One-shot diagnostic removed; original payment pathways retained.'
