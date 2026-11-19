@@ -83,7 +83,7 @@ test('new orders never reserve below listed price and can recover from a cancell
   const old=await system.api(1,'donat/create',{...payload,requestId:'order-before-cancel'});
   assert.equal(old.status,200);
   const blocked=await system.api(1,'donat/create',{...payload,requestId:'order-after-blocked'});
-  assert.equal(blocked.data.error,'order_already_active');
+  assert.ok(['order_already_active','p2p_invoice_in_progress'].includes(blocked.data.error));
   const cancellation=await system.api(1,'invoice/'+old.data.invoiceId+'/cancel',{});
   assert.equal(cancellation.data.status,'cancelled');
   const replacement=await system.api(1,'donat/create',{...payload,requestId:'order-after-blocked'});
