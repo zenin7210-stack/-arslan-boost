@@ -50,7 +50,8 @@ test('Existing confirmed P2P card order still creates a linked invoice without w
   assert.equal(wallet.balance,0);
 });
 
-test('a busy bank amount selects +100 for the next customer without altering product price',async()=>{
+test('a busy bank amount selects +100 for the next customer without altering product price',async t=>{
+  t.mock.method(globalThis,'fetch',async()=>Response.json({ok:true,result:true}));
   const system=app();
   const make=(id,key)=>system.api(id,'donat/create',{
     product:'spin_coins',option:'100',detail:'123456',expectedAmount:21990,
@@ -77,7 +78,7 @@ test('a busy bank amount selects +100 for the next customer without altering pro
   assert.equal(system.db.prepare("SELECT COUNT(*) AS n FROM invoices WHERE status='pending'").get().n,3);
   const verified=await system.relay({sender:'BankDemo',text:notification(22090,'BANKALTERNATE200')});
   assert.equal(verified.data.matched,true,JSON.stringify({status:verified.status,error:verified.data.error,detail:verified.data.detail}));
-  assert.equal(verified.data.invoiceId,second.data.invoiceId);
+  assert.equal(system.db.prepare('SELECT invoice_id FROM p2p_incoming WHERE amount=?').get(22090).invoice_id,second.data.invoiceId);
   const after=(await system.api(2,'invoice/'+second.data.invoiceId+'/status',null,'GET')).data;
   assert.equal(after.status,'paid');
   assert.equal((await system.api(2,'donat/state')).data.orders[0].status,'paid');
