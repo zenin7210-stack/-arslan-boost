@@ -1,0 +1,36 @@
+name: Diagnose actual production P2P_MODE binding (no mutation)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/diagnose-binding-mode.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Read only Worker settings and reveal only allowed mode classification
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' \
+            > /tmp/arslan_worker_settings.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/arslan_worker_settings.json','utf8'));
+          if(!j.success)throw Error('Unable to read live Worker settings');
+          const bindings=j.result?.bindings||[];
+          const b=bindings.find(x=>x.name==='P2P_MODE');
+          if(!b){console.log('P2P_MODE binding: absent');process.exit(0);}
+          const mode=String(b.text||b.value||'');
+          const safe=['private','manual','off','disabled','0','1',''];
+          console.log('P2P_MODE binding type:',b.type);
+          console.log('P2P_MODE classification:',safe.includes(mode)?(mode||'empty'):'other');
+          console.log('P2P_USERS binding exists:',bindings.some(x=>x.name==='P2P_USERS'));
+          console.log('ADMIN_ID binding exists:',bindings.some(x=>x.name==='ADMIN_ID'));
+          JS
