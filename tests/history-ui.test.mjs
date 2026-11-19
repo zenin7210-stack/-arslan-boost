@@ -37,7 +37,7 @@ function prepare({orders=[],donatOrders=[],payments=[],filter='all',historyTab='
       historyNoOrdersHint:'Buyurtma berganingizdan keyin',historyNoPaymentsHint:'To‘lovlar shu yerda',
       historyNoMatches:'Bu holatda yozuvlar yo‘q',historyNoMatchesHint:'Barchasini ko‘ring',
       historyClearFilter:'Barchasini ko‘rsatish',historyStartOrder:'Buyurtma berish',
-      historyStartTopup:'Balansni to‘ldirish',historyRefresh:'Yangilash',unavailableHistory:'Ulanmagan',
+      historyStartTopup:'Mahsulotlar',historyRefresh:'Yangilash',unavailableHistory:'Ulanmagan',
       historyConnectionHint:'Tarmoqni tekshiring',paymentNumber:'To‘lov',
       walletTitle:'Hamyonni to‘ldirish',historyOrderPaidWaiting:'To‘langan · bajarilishi kutilmoqda'
     })[key]||key,
@@ -66,10 +66,10 @@ test('no orders shows a helpful CTA and hides pointless filters',()=>{
   assert.match(u.html,/data-history-action="new-order"/);
   assert.equal(u.nodes.get('#filters').hidden,true);
 });
-test('no payments opens wallet instead of a dead end',()=>{
+test('no payments shows products instead of a wallet top-up',()=>{
   const u=prepare({historyTab:'payments'});
   assert.match(u.html,/Hozircha to‘lovlar yo‘q/);
-  assert.match(u.html,/data-history-action="new-topup"/);
+  assert.match(u.html,/data-history-action="browse-products"/);
 });
 test('paid BOOST is in paid filter with accurate status, not waiting',()=>{
   const order={id:15,status:'paid',mode:'wing',game_id:'12345',current_rank:1,target_rank:2,
