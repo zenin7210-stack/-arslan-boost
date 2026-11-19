@@ -1,4 +1,4 @@
-name: Verify live direct checkout after publication (read-only)
+name: Verify live Stars separation, 0013 bank UI and keyboard fixes
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -16,8 +16,10 @@ jobs:
           set -euo pipefail
           URL='https://arslan-boost-bot.zenin7210.workers.dev'
           curl --fail --silent --show-error --max-time 20 "$URL/" > /tmp/index.html
-          curl --fail --silent --show-error --max-time 20 "$URL/app.js?v=20261119-direct3" > /tmp/app.js
-          curl --fail --silent --show-error --max-time 20 "$URL/assets/donat/shop.js?v=20261119-direct3" > /tmp/shop.js
+          curl --fail --silent --show-error --max-time 20 "$URL/app.js?v=20261119-fix4" > /tmp/app.js
+          curl --fail --silent --show-error --max-time 20 "$URL/app.css?v=20261119-keyboardfix4" > /tmp/app.css
+          curl --fail --silent --show-error --max-time 20 "$URL/assets/p2p.js?v=20261119-exacts4" > /tmp/p2p.js
+          curl --fail --silent --show-error --max-time 20 "$URL/assets/donat/shop.js?v=20261119-fix4" > /tmp/shop.js
           curl --fail --silent --show-error --max-time 20 "$URL/healthz" > /tmp/health.json
           curl --fail --silent --show-error --max-time 20 "$URL/api/config" > /tmp/config.json
           code="$(curl -sS --max-time 20 -o /tmp/unauth -w '%{http_code}' \
@@ -31,16 +33,25 @@ jobs:
           const fs=require('node:fs'),assert=require('node:assert/strict');
           const app=fs.readFileSync('/tmp/app.js','utf8'),shop=fs.readFileSync('/tmp/shop.js','utf8');
           const html=fs.readFileSync('/tmp/index.html','utf8');
+          const css=fs.readFileSync('/tmp/app.css','utf8');
+          const p2p=fs.readFileSync('/tmp/p2p.js','utf8');
           const health=JSON.parse(fs.readFileSync('/tmp/health.json','utf8'));
           const cfg=JSON.parse(fs.readFileSync('/tmp/config.json','utf8'));
           const checks=[
-            ['new BOOST script',html.includes('app.js?v=20261119-direct3')],
-            ['new DONAT Shop script',html.includes('shop.js?v=20261119-direct3')],
+            ['new BOOST script',html.includes('app.js?v=20261119-fix4')],
+            ['new DONAT Shop script',html.includes('shop.js?v=20261119-fix4')],
+            ['new keyboard styles',html.includes('app.css?v=20261119-keyboardfix4')],
+            ['new exact amount UI',html.includes('p2p.js?v=20261119-exacts4')],
             ['three order choices',app.includes("['uzcard','humo','stars']")],
             ['BOOST wallet button removed',!app.includes('id="order-topup"')],
             ['DONAT wallet button removed',!shop.includes('id="donat-topup"')],
             ['DONAT card checkout',shop.includes('startCardOrder(payload,submit')],
-            ['DONAT direct Telegram Stars',shop.includes("api('donat/create',{...payload,acceptTerms:true})")],
+            ['DONAT Stars blocked',shop.includes("method !== 'stars' && connected() && paymentReady(method)")],
+            ['BOOST Stars remains available',app.includes("['uzcard','humo','stars']")],
+            ['Balance and Cashback hidden',!html.includes('id="quick-balance"')&&!html.includes('id="setting-balance"')&&!html.includes('class="balance-row"')],
+            ['iOS visual viewport handling',app.includes("--visible-height")&&css.includes('.keyboard-open .product-sheet .widget-footer')],
+            ['Done control outside sheet',app.includes("keyboardDone.parentElement !== document.body")],
+            ['Exact amount notice',p2p.includes("orderTransferDifference")],
             ['previous wallet read-only',app.includes("balance-readonly")],
             ['Telegram invoices enabled',health.paymentsEnabled===true],
             ['Stars rate configured',Number(cfg.orderStarsRate)>0],
