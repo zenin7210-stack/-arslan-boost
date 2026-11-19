@@ -82,3 +82,26 @@ test('stale checked card transfer is recoverable; active new one uses another ex
   assert.equal(later.data.status,'pending','Delayed bank transfer must not pay a newly created invoice');
   assert.equal(later.data.balance,10000,'One real bank event is credited exactly once');
 });
+
+test('loading bank options and quoting amount does not execute mutating batch statements',async()=>{
+  const sys=app();
+  sys.env.DB.batch=async()=>{throw new Error('unsafe expiry write on read-only screen load');};
+  const options=await sys.api(1,'invoice/options',{});
+  assert.equal(options.status,200,'loading wallet should not invoke expiry writes');
+  assert.deepEqual(options.data.methods.sort(),['humo','uzcard']);
+  const quote=await sys.api(1,'invoice/quote',{amount:10000,method:'uzcard'});
+  assert.equal(quote.status,200);
+  assert.equal(quote.data.uniqueAmount,10000);
+});
+test('an old cancelled wallet request is visible in read-only options',async()=>{
+  const sys=app();
+  const first=await sys.api(1,'invoice',{amount:10000,method:'uzcard',requestId:'cancel-wallet-1'});
+  assert.equal(first.status,200);
+  const cancelled=await sys.api(1,'invoice/'+first.data.id+'/cancel',{});
+  assert.equal(cancelled.data.status,'cancelled');
+  const options=await sys.api(1,'invoice/options',{});
+  assert.equal(options.status,200);
+  assert.equal(options.data.active,null);
+  assert.equal(options.data.latest.id,first.data.id);
+  assert.equal(options.data.latest.status,'cancelled');
+});
