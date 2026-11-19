@@ -1,0 +1,66 @@
+name: Verify live P2P protection and reconciliation state (read-only)
+on:
+  push:
+    branches: [audit/auto-card-20261119]
+    paths: [.github/workflows/p2p-live-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Confirm live URLs without issuing payment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(curl -sS --max-time 25 -o /tmp/render_health -w '%{http_code}' https://arslan-boost-1.onrender.com/)" = "200"
+          grep -q 'ARSLAN listener process alive' /tmp/render_health
+          curl --fail --silent --show-error --max-time 25 https://arslan-boost-bot.zenin7210.workers.dev/healthz >/tmp/worker_health.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const r=JSON.parse(fs.readFileSync('/tmp/worker_health.json','utf8'));
+          if(r.paymentsEnabled!==true) throw Error('Telegram payment backend is not enabled');
+          console.log('Render process health and Cloudflare Stars health: OK');
+          JS
+      - name: Verify card relay blocks unauthenticated events (no D1 modification)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for method in humo cardxabar; do
+            code="$(curl -sS --max-time 25 -o /tmp/p2p_unauth_"$method" -w '%{http_code}' \
+              -H 'Content-Type: application/json' --data '{"eventId":"diagnostic-without-money"}' \
+              "https://arslan-boost-bot.zenin7210.workers.dev/relay/$method")"
+            if [ "$code" != 403 ] && [ "$code" != 404 ]; then
+              echo "::error::Bank webhook accepted an unauthenticated payload with HTTP $code"
+              exit 1
+            fi
+            echo "Unauthenticated $method payment relay refused: HTTP $code"
+          done
+      - name: Query only aggregate D1 payment state; no card/customer data
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -q "$ZIP" 'arslan-boost-cloudflare/wrangler.production.jsonc' -d /tmp/arslan-rw
+          cd /tmp/arslan-rw/arslan-boost-cloudflare
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command \
+            "SELECT (SELECT COUNT(*) FROM invoices WHERE status='pending') AS pending_invoices,
+                    (SELECT COUNT(*) FROM p2p_incoming) AS received_events,
+                    (SELECT COUNT(*) FROM p2p_incoming WHERE invoice_id IS NOT NULL) AS linked_events,
+                    (SELECT COUNT(*) FROM invoices WHERE status='paid') AS confirmed_invoices,
+                    (SELECT COUNT(*) FROM invoices WHERE checked_at IS NOT NULL AND status IN ('pending','expired')) AS pending_claims;" > /tmp/arslan_p2p_aggregates.json
+          node - <<'JS'
+          const fs=require('node:fs'),j=JSON.parse(fs.readFileSync('/tmp/arslan_p2p_aggregates.json','utf8'));
+          const row=(Array.isArray(j)?j:[j]).flatMap(x=>x.results||[])[0];
+          if(!row)throw Error('Could not read aggregate D1 payment state');
+          for(const [key,v]of Object.entries(row))if(!Number.isInteger(v)||v<0)throw Error('Invalid D1 count '+key);
+          console.log('D1 aggregate (no customer identifiers):',JSON.stringify(row));
+          JS
