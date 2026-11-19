@@ -1,0 +1,54 @@
+name: Inspect historical P2P API errors (read-only, redacted)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/inspect-p2p-observability.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch Cloudflare Workers Observability errors without personal data
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/query.json <<'JSON'
+          {
+            "queryId":"arslan-p2p-20261119-diagnose",
+            "timeframe":{"from":1795093200000,"to":1795101300000},
+            "dry":true,"view":"events","limit":100,
+            "parameters":{"datasets":["cloudflare-workers"],"filterCombination":"and",
+              "filters":[{"key":"$metadata.service","operation":"eq","type":"string","value":"arslan-boost-bot"}],
+              "orderBy":{"value":"timestamp","order":"desc"}}
+          }
+          JSON
+          code="$(curl -sS -o /tmp/observability.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data-binary @/tmp/query.json \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/observability/telemetry/query')"
+          node - "$code" <<'JS'
+          const fs=require('node:fs');
+          const status=process.argv[2];
+          const j=JSON.parse(fs.readFileSync('/tmp/observability.json','utf8'));
+          if(status!=='200'||j.success===false){
+            console.log('Observability unavailable, HTTP',status,'error categories',
+              (j.errors||[]).map(x=>x.code||String(x.message).slice(0,80)));
+            process.exit(0);
+          }
+          const result=j.result||{};
+          console.log('Query state:',result.run?.status||result.run?.id||'unknown');
+          const events=result.events||result.result?.events||[];
+          const relevant=events.filter(x=>String(x.$metadata?.trigger||'').includes('invoice/options') ||
+            String(x.$metadata?.url||'').includes('invoice/options'));
+          console.log('Retrieved events',events.length,'options requests',relevant.length);
+          for(const e of relevant.slice(0,15)){
+            const m=e.$metadata||{};
+            console.log('Invoice options request status:',m.statusCode||'unknown','error category:',
+              ['service_unavailable','p2p_disabled','SQLITE_ERROR','D1_ERROR'].find(z=>String(m.error||m.message||'').includes(z))||'other');
+          }
+          JS
