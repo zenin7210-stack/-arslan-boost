@@ -123,7 +123,8 @@ function publicInvoice(env, row) {
     item.number.endsWith(row.card_number)) : null;
   return {
     id: row.id, baseAmount: row.base_amount, uniqueAmount: row.unique_amount,
-    method: row.payment_method, status, createdAt: row.created_at, expiresAt: row.expires_at,
+    method: row.payment_method, status, verificationMode: env.P2P_MODE === 'private' ? 'automatic' : 'manual',
+    createdAt: row.created_at, expiresAt: row.expires_at,
     purpose: row.order_payment_id === null ? "topup" : "order",
     serverTime: time, checkedAt: row.checked_at,
     canCancel: status === "pending" && row.checked_at == null && row.expires_at > time,
