@@ -1,0 +1,230 @@
+name: ARSLAN BOOST — concurrent fixed-price checkout, guarded D1 0015
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/deploy-concurrent-exact.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Download exactly tested isolated concurrent release
+        uses: actions/download-artifact@v4
+        with:
+          name: arslan-concurrent-exact-staged
+          repository: zenin7210-stack/-arslan-boost
+          run-id: 44624963156
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+
+      - name: Verify immutable test artifact, Worker destination and migration text
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            '827a13e07686b15a7236f0020e36801290dbbffbfbb0f92a2b674d25bc474938' release/src/p2p.mjs \
+            'f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058' release/public/assets/p2p.js \
+            '9863853bd19cab3be973a8d0df4c37eb72f22fba3d3c140a15d42acca7c33c65' release/public/index.html \
+            '6983a12324e1538944949f7a70e6b389a16666aede8f4ba9a0506eb6bee6d1be' release/tests/p2p.test.mjs \
+            '545446107883fda4c2d26ea082de5168660738430f2e0f9360d8b37d7764e3d0' release/migrations/0015_concurrent_exact_amounts.sql \
+            '8ef30201f0b9a60fe8ed1f5abef4aa89868d3d60dc279108f28dd058097628ef' release/src/worker.mjs \
+            'b66976de7e620f1682b774607e11a682458c8b0ebf824bf198866a6829dd88f6' release/public/app.js \
+            '5abec56a8932e47a849b4b81e9fb3157a4c4a6d6224174e75371f9477cc707f0' release/wrangler.production.jsonc | sha256sum -c -
+          node - <<'JS'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('release/wrangler.production.jsonc','utf8'));
+          if(c.name!=='arslan-boost-bot' || c.d1_databases?.[0]?.database_name!=='arslan-boost-payments' ||
+             c.keep_vars!==true || Object.hasOwn(c.vars||{},'P2P_MODE'))
+            throw Error('Unexpected Cloudflare Worker/database target or unsafe P2P_MODE setting');
+          const sql=fs.readFileSync('release/migrations/0015_concurrent_exact_amounts.sql','utf8');
+          if(!sql.includes('DROP INDEX IF EXISTS p2p_unique_pending') ||
+             !sql.includes('CREATE INDEX IF NOT EXISTS p2p_pending_card_amount') ||
+             sql.includes('DROP TABLE') || sql.includes('DELETE FROM'))
+            throw Error('Unexpected migration 0015 operations');
+          if(!fs.readFileSync('release/public/index.html','utf8').includes('20261120-concurrent1'))
+            throw Error('Missing client cache bust');
+          JS
+          echo 'PASS: exact stage artifact and non-destructive DB migration verified'
+
+      - name: Re-run full test suite and JavaScript syntax
+        working-directory: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          npm test > /tmp/arslan-concurrent-tests.txt 2>&1 || {
+            tail -n 90 /tmp/arslan-concurrent-tests.txt; exit 1;
+          }
+          tail -n 18 /tmp/arslan-concurrent-tests.txt
+          node - <<'JS'
+          const log=require('fs').readFileSync('/tmp/arslan-concurrent-tests.txt','utf8');
+          if(!/# pass 55\b/.test(log) || !/# fail 0\b/.test(log) || !/# skipped 26\b/.test(log))
+            throw Error('Unexpected test count; missing protection');
+          console.log('PASS: all 55 active tests; 26 declared skips remain skipped');
+          JS
+
+      - name: Verify running frontend is previous exact-price build
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://arslan-boost-bot.zenin7210.workers.dev'
+          curl --fail --silent --show-error --retry 2 --max-time 25 "$BASE/assets/p2p.js?v=20261120-exact20min" > /tmp/live-p2p.js
+          curl --fail --silent --show-error --retry 2 --max-time 25 "$BASE/index.html" > /tmp/live-index.html
+          curl --fail --silent --show-error --retry 2 --max-time 25 "$BASE/app.js" > /tmp/live-app.js
+          node - <<'JS'
+          const fs=require('fs'),crypto=require('crypto');
+          const sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          const oldOrNew=[
+            ['p2p','/tmp/live-p2p.js','f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768','f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058'],
+            ['HTML','/tmp/live-index.html','8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44','9863853bd19cab3be973a8d0df4c37eb72f22fba3d3c140a15d42acca7c33c65']
+          ];
+          for(const [name,path,old,newS] of oldOrNew)
+            if(![old,newS].includes(sha(path)))throw Error('Production '+name+' differs from audited versions');
+          if(sha('/tmp/live-app.js')!=='b66976de7e620f1682b774607e11a682458c8b0ebf824bf198866a6829dd88f6')
+            throw Error('Production application bundle unexpectedly changed');
+          console.log('PASS: production matches previous/desired vetted source');
+          JS
+
+      - name: Verify private payment mode and D1 baseline (read-only)
+        id: baseline
+        working-directory: release
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::Missing Cloudflare token'; exit 1; }
+          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/settings.json
+          node - <<'JS'
+          const j=require('/tmp/settings.json');
+          if(!j.success)throw Error('Cannot read Worker settings');
+          const b=j.result?.bindings||[];
+          if(!b.some(x=>x.name==='P2P_MODE'&&x.type==='plain_text'&&x.text==='private'))
+            throw Error('Bank payment mode is not private');
+          for(const key of ['ADMIN_ID','P2P_CARDS','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'])
+            if(!b.some(x=>x.name===key))throw Error('Missing private payment binding '+key);
+          if(b.some(x=>x.name==='P2P_USERS'))throw Error('P2P_USERS changed; do not deploy');
+          console.log('PASS: existing payment security configuration');
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote \
+            --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' > /tmp/ledger.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote \
+            --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('p2p_unique_pending','p2p_pending_card_amount','p2p_one_open_invoice','p2p_one_invoice_per_order','p2p_paid_requires_bank_event','p2p_settle_on_paid','p2p_match_incoming')" > /tmp/schema.json
+          node - <<'JS'
+          const fs=require('fs');
+          const rows=f=>(j=>Array.isArray(j)?j.flatMap(x=>x.results||[]):j.results||[])(JSON.parse(fs.readFileSync(f,'utf8')));
+          const last=rows('/tmp/ledger.json')[0]?.name;
+          if(!['0014_multiple_orders.sql','0015_concurrent_exact_amounts.sql'].includes(last))
+            throw Error('Unexpected production migration ledger: '+last);
+          const names=new Set(rows('/tmp/schema.json').map(x=>x.name));
+          const old=last==='0014_multiple_orders.sql';
+          if(names.has('p2p_unique_pending')!==old||names.has('p2p_pending_card_amount')===old)
+            throw Error('Migration/index state inconsistent; refuse to change DB');
+          for(const name of ['p2p_one_open_invoice','p2p_one_invoice_per_order','p2p_paid_requires_bank_event','p2p_settle_on_paid','p2p_match_incoming'])
+            if(!names.has(name))throw Error('Missing safety index/trigger '+name);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,'needs_migration='+old+'\n');
+          console.log(old?'PASS: D1 0014 verified, safe migration to 0015 required':'PASS: D1 already migrated safely');
+          JS
+
+      - name: Record D1 Time Travel recovery bookmark (no data reset)
+        if: steps.baseline.outputs.needs_migration == 'true'
+        working-directory: release
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments \
+            --config wrangler.production.jsonc
+          echo '::notice::Recovery bookmark recorded in this job BEFORE migration. Never blindly roll back newer customer payments.'
+
+      - name: Apply only migration 0015 (remove amount-wide UNIQUE index)
+        if: steps.baseline.outputs.needs_migration == 'true'
+        working-directory: release
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 migrations apply arslan-boost-payments \
+            --remote --config wrangler.production.jsonc
+
+      - name: Verify new D1 index and original payment/bank safeguards
+        working-directory: release
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote \
+            --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('p2p_unique_pending','p2p_pending_card_amount','p2p_one_open_invoice','p2p_one_invoice_per_order','p2p_paid_requires_bank_event','p2p_settle_on_paid','p2p_match_incoming')" > /tmp/after-indexes.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote \
+            --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' > /tmp/after-ledger.json
+          node - <<'JS'
+          const fs=require('fs');
+          const rows=f=>(j=>Array.isArray(j)?j.flatMap(x=>x.results||[]):j.results||[])(JSON.parse(fs.readFileSync(f)));
+          if(rows('/tmp/after-ledger.json')[0]?.name!=='0015_concurrent_exact_amounts.sql')
+            throw Error('D1 migration 0015 not recorded; do not deploy');
+          const names=new Set(rows('/tmp/after-indexes.json').map(x=>x.name));
+          if(names.has('p2p_unique_pending'))throw Error('Global amount-wide UNIQUE still exists');
+          for(const name of ['p2p_pending_card_amount','p2p_one_open_invoice','p2p_one_invoice_per_order',
+              'p2p_paid_requires_bank_event','p2p_settle_on_paid','p2p_match_incoming'])
+            if(!names.has(name))throw Error('Missing bank safety index or trigger: '+name);
+          console.log('PASS: migration 0015 installed; bank protections and per-user restrictions preserved');
+          JS
+
+      - name: Deploy tested Worker with original Secrets, accounts and cards
+        working-directory: release
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo 'Concurrent fixed-price code deployed; no customer invoice/payments directly modified'
+
+      - name: Post-deploy read-only smoke check of public frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          expected='f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058'
+          found=0
+          for attempt in {1..15}; do
+            if curl --fail --silent --show-error --max-time 25 \
+              "$URL/assets/p2p.js?v=20261120-concurrent1" > /tmp/p2p-production.js; then
+              current="$(sha256sum /tmp/p2p-production.js | cut -d' ' -f1)"
+              if [[ "$current" == "$expected" ]]; then found=1; break; fi
+            fi
+            sleep 3
+          done
+          if [[ "$found" != '1' ]]; then echo '::error::New UI not propagated'; exit 1; fi
+          curl -fsSL --max-time 25 "$URL/index.html" > /tmp/p2p-production-index.html
+          grep -q '20261120-concurrent1' /tmp/p2p-production-index.html
+          curl -fsSL --max-time 25 "$URL/healthz" > /tmp/arslan-health.json
+          node - <<'JS'
+          const j=require('/tmp/arslan-health.json');
+          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Worker not healthy');
+          console.log('PASS: concurrent checkout UI publicly deployed and Worker healthy (no live payment created)');
+          JS
