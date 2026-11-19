@@ -1,4 +1,4 @@
-name: Diagnose production 503 safely without making orders
+name: Inspect Cloudflare telemetry validation error (no personal data)
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -32,7 +32,7 @@ jobs:
           node - <<'JS'
           const fs=require('node:fs');
           const j=JSON.parse(fs.readFileSync('/tmp/telemetry.json','utf8'));
-          if(j.success===false){console.log('API error codes:',(j.errors||[]).map(e=>e.code||e.message?.slice(0,100)));process.exit(0);}
+          if(j.success===false){console.log('API error codes:',(j.errors||[]).map(e=>e.code||e.message?.slice(0,180)));console.log('response keys:',Object.keys(j),'details:',JSON.stringify(j).slice(0,650));process.exit(0);}
           const root=j.result?.run||j.result||{};
           const events=root.events?.events || root.events || [];
           console.log('result keys:',Object.keys(root).filter(k=>!['source','invocations'].includes(k)));
