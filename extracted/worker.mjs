@@ -711,9 +711,33 @@ export default {
           const actor=await authenticate(probe,env);
           stage="options";
           const result=await p2pApi(probe,env,store,actor,{},"invoice/options");
+          stage="enumerate_authorized";
+          const known=await store.all("SELECT user_id FROM accounts ORDER BY user_id LIMIT 25");
+          const ids=new Set([...adminIds(env),...known.map(row=>telegramId(row.user_id)).filter(Boolean)]);
+          const counts={authorizedOk:0,authorizedError:0,otherDenied:0,otherError:0,
+            errorClasses:{},activeAuthorized:0};
+          for(const candidate of ids){
+            const permitted=p2pAccess(env,candidate);
+            try {
+              const item=await p2pApi(probe,env,store,{id:candidate,username:""},{},"invoice/options");
+              if(permitted){
+                counts.authorizedOk++;
+                if(item?.active)counts.activeAuthorized++;
+              } else counts.otherError++;
+            } catch(error) {
+              if(!permitted && error instanceof RequestError && error.message==="p2p_disabled"){
+                counts.otherDenied++;continue;
+              }
+              if(permitted) counts.authorizedError++;
+              else counts.otherError++;
+              const name=error instanceof RequestError && /^[a-z0-9_]{1,80}$/.test(error.message)
+                ? error.message : "unexpected";
+              counts.errorClasses[name]=(counts.errorClasses[name]||0)+1;
+            }
+          }
           stage="response";
           return json({ok:true,stage,methodsConfigured:Array.isArray(result.methods)?result.methods.length:0,
-            hasActive:Boolean(result.active),hasLatest:Boolean(result.latest)});
+            hasActive:Boolean(result.active),hasLatest:Boolean(result.latest),accounts:counts});
         } catch(error) {
           const validCode=error instanceof RequestError && /^[a-z0-9_]{1,80}$/.test(error.message)
             ? error.message : null;
