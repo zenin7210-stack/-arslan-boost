@@ -38,7 +38,7 @@ jobs:
           python3 fixes/apply-price20.py release
           python3 fixes/test-price20.py release
           printf '%s  %s\n' \
-            'f15edeedfb1fc0819560e6a6d8223d0ffcbac2f3e1045c9ec7d94018d0bb2181' release/src/p2p.mjs \
+            '58fd0d701518fd14d02b1fda8ab4e90a70de4f9216e5a860f6cbaf022677b1cc' release/src/p2p.mjs \
             'f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768' release/public/assets/p2p.js \
             '8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44' release/public/index.html \
             '91d037ceffb037517e827d438b24dd17534330394914ed9a53c49727ccf43af4' release/tests/p2p.test.mjs | sha256sum --check
@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           base64 -d fixes/concurrent_release.patch.gz.b64 | gzip -d > /tmp/concurrent.patch
-          printf '%s  %s\n' '2b06b1c6f042659f35b0f2425dd502597c1818a69f8b48664e31c58732e33f6c' /tmp/concurrent.patch | sha256sum --check
+          printf '%s  %s\n' '8576ddf437efa863aa56ec6b4b10454c6f5074c64f63d64fdedbac92d96c601b' /tmp/concurrent.patch | sha256sum --check
           cd release
           patch --batch --fuzz=0 -p1 < /tmp/concurrent.patch
           printf '%s  %s\n' \
