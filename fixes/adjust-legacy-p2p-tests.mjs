@@ -15,4 +15,8 @@ replaceOnce(
  '  assert.equal((await system.api(3, "invoice", form)).status, 409);\n  system.db.prepare("UPDATE invoices SET created_at = created_at - 601, expires_at = expires_at - 601 WHERE id = ?")\n    .run(first.data.id);\n  const reused = await system.api(3, "invoice", form);',
  '  const alternative = await system.api(3, "invoice", form);\n  assert.equal(alternative.status, 200);\n  assert.equal(alternative.data.uniqueAmount, 50100);\n  assert.equal((await system.api(3, "invoice/" + alternative.data.id + "/cancel", {})).data.status, "cancelled");\n  system.db.prepare("UPDATE invoices SET created_at = created_at - 601, expires_at = expires_at - 601 WHERE id = ?")\n    .run(first.data.id);\n  const reused = await system.api(3, "invoice", {...form,requestId:"req-003-reuse-original"});',
  'Previously pending 50000 now gets fallback 50100');
+replaceOnce(
+ '  assert.equal((await system.api(2, "invoice", form)).status, 409);\n  const { data: second } = await system.api(2, "invoice", { ...form, amount: 10000 });',
+ '  const offered = await system.api(2, "invoice/quote", form);\n  assert.equal(offered.data.uniqueAmount, 50100);\n  const { data: second } = await system.api(2, "invoice", { ...form, amount: 10000 });',
+ 'A delayed bank event must still settle the original old invoice');
 fs.writeFileSync(file,source);
