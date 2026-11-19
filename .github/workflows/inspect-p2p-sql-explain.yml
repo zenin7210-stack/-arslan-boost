@@ -36,7 +36,7 @@ jobs:
             "EXPLAIN SELECT card_id, enabled FROM p2p_card_flags"
           )
           i=0
-          for q in "\${tests[@]}"; do
+          for q in "${tests[@]}"; do
             i=$((i+1))
             if npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "$q" > /tmp/sql_probe.json 2> /tmp/sql_probe_err; then
               echo "QUERY $i PASS"
