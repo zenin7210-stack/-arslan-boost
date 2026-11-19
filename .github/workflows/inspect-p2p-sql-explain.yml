@@ -1,0 +1,47 @@
+name: Identify D1 invoice options query failure (read-only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/inspect-p2p-sql-explain.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Check live D1 SQL compilation without executing modifications
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          mkdir -p /tmp/arslan_sql
+          unzip -p "$ZIP" arslan-boost-cloudflare/wrangler.production.jsonc > /tmp/arslan_sql/wrangler.production.jsonc
+          cd /tmp/arslan_sql
+          tests=(
+            "EXPLAIN UPDATE invoices SET status = 'expired' WHERE status='pending' AND expires_at <= 100 AND checked_at IS NULL"
+            "EXPLAIN UPDATE invoices SET status = 'expired' WHERE status = 'pending' AND expires_at <= 100 AND (checked_at IS NULL OR 1 = 1) AND NOT EXISTS (SELECT 1 FROM p2p_incoming incoming WHERE incoming.invoice_id = invoices.id)"
+            "EXPLAIN UPDATE payments SET status = 'cancelled' WHERE status = 'pending' AND method IN ('uzcard','humo') AND EXISTS (SELECT 1 FROM invoices i WHERE i.order_payment_id = payments.id AND i.expires_at <= 100 AND (i.checked_at IS NULL OR 1 = 1) AND i.status = 'expired' AND NOT EXISTS (SELECT 1 FROM p2p_incoming incoming WHERE incoming.invoice_id = i.id))"
+            "EXPLAIN UPDATE orders SET status = 'cancelled' WHERE status='pending' AND EXISTS(SELECT 1 FROM payments p WHERE p.order_id=orders.id AND p.status='cancelled')"
+            "EXPLAIN UPDATE donat_orders SET status='cancelled' WHERE status='pending' AND EXISTS(SELECT 1 FROM payments p WHERE p.donat_order_id=donat_orders.id AND p.status='cancelled')"
+            "EXPLAIN SELECT * FROM invoices WHERE user_id=1 AND status='pending' AND expires_at > 100"
+            "EXPLAIN SELECT * FROM invoices WHERE user_id=1 AND order_payment_id IS NULL ORDER BY id DESC LIMIT 1"
+            "EXPLAIN SELECT p2p_balance FROM accounts WHERE user_id=1"
+            "EXPLAIN SELECT card_id, enabled FROM p2p_card_flags"
+          )
+          i=0
+          for q in "\${tests[@]}"; do
+            i=$((i+1))
+            if npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json --command "$q" > /tmp/sql_probe.json 2> /tmp/sql_probe_err; then
+              echo "QUERY $i PASS"
+            else
+              echo "QUERY $i FAIL"
+              sed -E 's/[0-9]{10,}/[redacted]/g' /tmp/sql_probe_err | tail -n 8
+            fi
+          done
