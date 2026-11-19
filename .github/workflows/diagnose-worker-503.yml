@@ -1,4 +1,4 @@
-name: Inspect Cloudflare telemetry validation error (no personal data)
+name: Read Cloudflare 503 telemetry, no customer payloads
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -17,7 +17,7 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           node - <<'JS' > /tmp/query.json
           const now=Date.now();
-          process.stdout.write(JSON.stringify({view:"events",limit:100,dry:true,
+          process.stdout.write(JSON.stringify({queryId:"card-checkout-diagnostic-20261119",view:"events",limit:100,dry:true,
             timeframe:{from:now-60*60*1000,to:now},
             parameters:{datasets:["cloudflare-workers"],filters:[
               {key:"$metadata.service",operation:"eq",type:"string",value:"arslan-boost-bot"}
