@@ -1,0 +1,42 @@
+name: Diagnose live card checkout database safely (read only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/diagnose-card-db-20261119.yml]
+permissions: {contents: read}
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Verify original configuration archive
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -q "$ZIP" -d release
+      - name: Inspect D1 aggregates and schema with no customer identifiers
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT 'invoice_pending_all' AS metric, COUNT(*) AS total FROM invoices WHERE status='pending' UNION ALL SELECT 'pending_recent_1h',COUNT(*) FROM invoices WHERE status='pending' AND created_at>strftime('%s','now')-3600 UNION ALL SELECT 'invoice_recent_1h',COUNT(*) FROM invoices WHERE created_at>strftime('%s','now')-3600 UNION ALL SELECT 'orders_pending_all',COUNT(*) FROM donat_orders WHERE status='pending' UNION ALL SELECT 'orders_recent_1h',COUNT(*) FROM donat_orders WHERE created_at>strftime('%s','now')-3600 UNION ALL SELECT 'orders_paid_all',COUNT(*) FROM donat_orders WHERE status='paid' UNION ALL SELECT 'boost_pending_all',COUNT(*) FROM orders WHERE status='pending' UNION ALL SELECT 'bank_pending_review',COUNT(*) FROM invoices WHERE status='pending' AND checked_at IS NOT NULL UNION ALL SELECT 'expired_pending_invoice',COUNT(*) FROM invoices WHERE status='pending' AND expires_at<strftime('%s','now')" > /tmp/live-metrics.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 2" > /tmp/live-migration.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "PRAGMA quick_check" > /tmp/live-check.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const rows=file=>JSON.parse(fs.readFileSync(file,'utf8')).flatMap(x=>x.results||[]);
+          console.log('AGGREGATE METRICS: '+JSON.stringify(rows('/tmp/live-metrics.json')));
+          console.log('SCHEMA LATEST: '+JSON.stringify(rows('/tmp/live-migration.json')));
+          console.log('INTEGRITY: '+JSON.stringify(rows('/tmp/live-check.json')));
+          JS
