@@ -1,0 +1,63 @@
+name: ARSLAN BOOST direct-order checkout regression (staging)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/test-direct-orders-20261119.yml]
+permissions: {contents: read}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Unpack locked baseline and build proposed direct checkout
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          unzip -q "$ZIP" -d release
+          git fetch --no-tags --depth=1 origin update/arslan-boost-next-20261119
+          for name in app.js worker.mjs store.mjs p2p.js; do
+            case "$name" in
+              app.js) target=public/app.js ;;
+              worker.mjs) target=src/worker.mjs ;;
+              store.mjs) target=src/store.mjs ;;
+              p2p.js) target=public/assets/p2p.js ;;
+            esac
+            git show "FETCH_HEAD:extracted/$name" > "release/arslan-boost-cloudflare/$target"
+          done
+          git show FETCH_HEAD:extracted/shop.js > release/arslan-boost-cloudflare/public/assets/donat/shop.js
+          git show FETCH_HEAD:src/p2p.mjs > release/arslan-boost-cloudflare/src/p2p.mjs
+          for name in index.html app.css; do
+            git show "FETCH_HEAD:public/$name" > "release/arslan-boost-cloudflare/public/$name"
+          done
+          git show FETCH_HEAD:public/assets/p2p.css > release/arslan-boost-cloudflare/public/assets/p2p.css
+          git show FETCH_HEAD:migrations/0012_requested_card_topup.sql > release/arslan-boost-cloudflare/migrations/0012_requested_card_topup.sql
+          git show FETCH_HEAD:tests/direct-checkout-ui.test.mjs > release/arslan-boost-cloudflare/tests/approved-ui.test.mjs
+          git show FETCH_HEAD:tests/history-ui.test.mjs > release/arslan-boost-cloudflare/tests/history-ui.test.mjs
+          git show FETCH_HEAD:fixes/retire-wallet-topup-tests.mjs > /tmp/retire-wallet-tests.mjs
+          git show FETCH_HEAD:fixes/direct-checkout-tests.snippet > /tmp/direct-orders.snippet
+          git show FETCH_HEAD:fixes/adjust-legacy-p2p-tests.mjs > /tmp/adjust-p2p-tests.mjs
+          git show FETCH_HEAD:fixes/p2p-exact-amount-tests.snippet > /tmp/p2p-extra.snippet
+          git fetch --no-tags --depth=1 origin fix/boost-stars-2026-11-19
+          git show FETCH_HEAD:fixes/adapt-boost-stars-legacy-tests.mjs > /tmp/adapt-stars-tests.mjs
+          git show FETCH_HEAD:fixes/boost-stars-extra-test.snippet > /tmp/stars-extra.snippet
+          git show FETCH_HEAD:fixes/p2p-ui-auto-refresh.test.mjs > release/arslan-boost-cloudflare/tests/p2p-ui-auto-refresh.test.mjs
+          cd release/arslan-boost-cloudflare
+          find src public -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+      - name: Run order-only payment, Stars, UI and bank fraud protection suites
+        working-directory: release/arslan-boost-cloudflare
+        run: |
+          set -euo pipefail
+          node /tmp/adapt-stars-tests.mjs tests/p2p.test.mjs
+          node /tmp/adjust-p2p-tests.mjs tests/p2p.test.mjs
+          cat /tmp/stars-extra.snippet >> tests/p2p.test.mjs
+          cat /tmp/p2p-extra.snippet >> tests/p2p.test.mjs
+          node /tmp/retire-wallet-tests.mjs tests/p2p.test.mjs
+          cat /tmp/direct-orders.snippet >> tests/p2p.test.mjs
+          node --check tests/p2p.test.mjs
+          npm test
