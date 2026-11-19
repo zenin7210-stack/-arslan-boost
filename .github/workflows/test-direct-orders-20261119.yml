@@ -1,4 +1,4 @@
-name: Verify bank event links only to correct +100 order after 0013 migration
+name: Reproduce 11990 Gold RINOK checkout failure from user's iPhone
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
