@@ -75,6 +75,15 @@ test('a busy bank amount selects +100 for the next customer without altering pro
   assert.equal(duplicated.data.id,second.data.id);
   assert.equal(duplicated.data.invoiceId,second.data.invoiceId);
   assert.equal(system.db.prepare("SELECT COUNT(*) AS n FROM invoices WHERE status='pending'").get().n,3);
+  const verified=await system.relay({sender:'BankDemo',text:notification(22090,'BANKALTERNATE200')});
+  assert.equal(verified.data.matched,true);
+  assert.equal(verified.data.invoiceId,second.data.invoiceId);
+  const after=(await system.api(2,'invoice/'+second.data.invoiceId+'/status',null,'GET')).data;
+  assert.equal(after.status,'paid');
+  assert.equal((await system.api(2,'donat/state')).data.orders[0].status,'paid');
+  assert.equal((await system.api(1,'invoice/'+first.data.invoiceId+'/status',null,'GET')).data.status,'pending');
+  assert.equal((await system.api(3,'invoice/'+third.data.invoiceId+'/status',null,'GET')).data.status,'pending');
+  assert.equal((await system.api(2,'state')).data.balance,0,'Direct order must not credit wallet');
 });
 test('new orders never reserve below listed price and can recover from a cancelled unpaid order',async()=>{
   const system=app();
