@@ -20,6 +20,9 @@ jobs:
           mkdir -p /tmp/boost_v3_source
           unzip -p "$ZIP" 'arslan-boost-cloudflare/public/app.js' > /tmp/boost_v3_source/app.js
           unzip -p "$ZIP" 'arslan-boost-cloudflare/src/worker.mjs' > /tmp/boost_v3_source/worker.mjs
+          unzip -p "$ZIP" 'arslan-boost-cloudflare/src/store.mjs' > /tmp/boost_v3_source/store.mjs
+          unzip -p "$ZIP" 'arslan-boost-cloudflare/src/catalog.mjs' > /tmp/boost_v3_source/catalog.mjs
+          unzip -p "$ZIP" 'arslan-boost-cloudflare/tests/payment.test.mjs' > /tmp/boost_v3_source/payment.test.mjs || true
           unzip -p "$ZIP" 'arslan-boost-cloudflare/public/assets/p2p.js' > /tmp/boost_v3_source/p2p.js
           unzip -p "$ZIP" 'arslan-boost-cloudflare/tests/approved-ui.test.mjs' > /tmp/boost_v3_source/approved-ui.test.mjs || true
           unzip -Z1 "$ZIP" | grep -E '^arslan-boost-cloudflare/(src/|public/|tests/)' | sed -n '1,120p' > /tmp/boost_v3_source/files.txt
@@ -41,4 +44,4 @@ jobs:
           cp /tmp/boost_v3_source/* extracted/
           git add extracted
           git commit -m "Extract non-secret v3 checkout sources for approved Stars fix"
-          git push origin HEAD:refs/heads/staging-boost-v3-source-20261119
+          git push --force origin HEAD:refs/heads/staging-boost-v3-source-20261119
