@@ -35,7 +35,7 @@
       quoteHint:'Если сумма занята, система предложит ближайшую свободную. Уточните сумму на следующем экране.',
       creditedAll:'На баланс будет зачислено',
       retryLoading:'Повторить загрузку', accessDenied:'Оплата картой сейчас недоступна для этого аккаунта.',
-      errorCode:'Код ошибки',
+      errorCode:'Код ошибки', orderTransferDifference:'Цена заказа: {price}. Сумма перевода выше на {extra} для определения платежа. Отмените заявку до перевода, если не согласны.',
     },
     uz: {
       wallet: 'Karta orqali to‘ldirish', balance: 'O‘tkazmalar balansi', amount: 'To‘ldirish summasi',
@@ -71,7 +71,7 @@
       quoteHint:'Summa band bo‘lsa, tizim yaqin bo‘sh summani tanlaydi. Aniq summa keyingi oynada tasdiqlanadi.',
       creditedAll:'Balansga tushadigan summa',
       retryLoading:'Qayta yuklash', accessDenied:'Karta orqali to‘lov ushbu akkaunt uchun hozircha mavjud emas.',
-      errorCode:'Xato kodi',
+      errorCode:'Xato kodi', orderTransferDifference:'Buyurtma narxi: {price}. To‘lovni aniqlash uchun o‘tkazma {extra} ga ko‘proq. Rozi bo‘lmasangiz, pul yuborishdan oldin arizani bekor qiling.',
     },
   };
 
@@ -290,8 +290,10 @@
       const version = show(`
         <div class="p2p-amount"><div><span>${e(t('exact'))}</span><strong>${e(money(invoice.uniqueAmount))}</strong><small class="p2p-no-extra">${e(t('noExtra'))}</small></div>
           <button type="button" class="p2p-copy" id="p2p-copy-sum">${e(t('copy'))}</button></div>
-        ${invoice.baseAmount !== invoice.uniqueAmount
-          ? `<p class="p2p-muted">${e(t('creditedAll'))}: ${e(money(invoice.uniqueAmount))}</p>` : ''}
+        ${invoice.purpose==='order' && invoice.baseAmount !== invoice.uniqueAmount
+          ? `<p class="p2p-muted">${e(t('orderTransferDifference').replace('{price}',money(invoice.baseAmount)).replace('{extra}',money(invoice.uniqueAmount-invoice.baseAmount)))}</p>`
+          : invoice.purpose==='topup' && invoice.baseAmount !== invoice.uniqueAmount
+            ? `<p class="p2p-muted">${e(t('creditedAll'))}: ${e(money(invoice.uniqueAmount))}</p>` : ''}
         <div class="p2p-progress"><div><span>${e(t('expires'))}</span><time id="p2p-clock">10:00</time></div>
           <progress id="p2p-progress" max="600" value="600" aria-label="${e(t('expires'))}"></progress></div>
         ${card ? `<div class="p2p-card">
