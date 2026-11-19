@@ -61,7 +61,7 @@ jobs:
           const app=fs.readFileSync('public/app.js','utf8');
           const server=fs.readFileSync('src/worker.mjs','utf8');
           const store=fs.readFileSync('src/store.mjs','utf8');
-          const schema=fs.readFileSync('migrations/0001_checkout.sql','utf8');
+          const schema=fs.readFileSync('migrations/0008_transfer_orders.sql','utf8');
           assert.match(app, /\['uzcard','humo','stars'\]/);
           assert.match(app, /paymentMethod:'stars',acceptTerms:true/);
           assert.match(app, /showStarsPayment\(\{kind:'order'/);
@@ -70,7 +70,7 @@ jobs:
           assert.match(server, /if \(byStars\) result.payment = await paymentDetails/);
           assert.match(store, /kind IN \('topup','order'\) AND method = 'stars'/);
           assert.match(store, /const stars = method === "stars"/);
-          assert.match(schema, /CREATE TRIGGER IF NOT EXISTS settle_stars_payment/);
+          assert.match(schema, /CREATE TRIGGER settle_order_payment/);
           assert.match(schema, /WHERE NEW.kind = 'order'/);
           JS
       - name: Save verified release package for deployment
@@ -113,7 +113,7 @@ jobs:
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
             --command 'SELECT name FROM d1_migrations ORDER BY id' > /tmp/stars_v3_ledger.json
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT name FROM sqlite_master WHERE name IN ('orders','payments','accounts','settle_stars_payment','p2p_paid_requires_bank_event','arslan_one_active_boost')" > /tmp/stars_v3_schema.json
+            --command "SELECT name FROM sqlite_master WHERE name IN ('orders','payments','accounts','settle_order_payment','p2p_paid_requires_bank_event','arslan_one_active_boost')" > /tmp/stars_v3_schema.json
           node - <<'JS'
           const fs=require('node:fs');
           function rows(p){const j=JSON.parse(fs.readFileSync(p,'utf8'));return (Array.isArray(j)?j:[j]).flatMap(x=>x.results||[]);}
@@ -127,7 +127,7 @@ jobs:
           if(JSON.stringify(migrations)!==JSON.stringify(expected))
             throw Error('Unexpected D1 migration ledger: refusing deployment');
           const found=new Set(rows('/tmp/stars_v3_schema.json').map(x=>x.name));
-          for(const k of ['orders','payments','accounts','settle_stars_payment','p2p_paid_requires_bank_event','arslan_one_active_boost'])
+          for(const k of ['orders','payments','accounts','settle_order_payment','p2p_paid_requires_bank_event','arslan_one_active_boost'])
             if(!found.has(k))throw Error('Missing D1 schema object: '+k);
           console.log('D1 unchanged; existing Stars settlement trigger and P2P protection verified');
           JS
