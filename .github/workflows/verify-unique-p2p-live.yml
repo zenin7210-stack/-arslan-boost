@@ -1,0 +1,76 @@
+name: Verify live unique P2P sums and safe cancellation (read-only)
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/verify-unique-p2p-live.yml]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify latest public Mini App and read-only API
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL=https://arslan-boost-bot.zenin7210.workers.dev
+          curl --fail --silent --show-error --max-time 25 "$URL/" > /tmp/live_index.html
+          curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.js?v=20261119-unique" > /tmp/live_p2p.js
+          curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.css?v=20261119-unique" > /tmp/live_p2p.css
+          curl --fail --silent --show-error --max-time 25 "$URL/healthz" > /tmp/live_health.json
+          code="$(curl -sS --max-time 20 -o /tmp/p2p_unauthorized -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            --data '{"amount":10000,"method":"uzcard"}' "$URL/api/invoice/quote")"
+          if [ "$code" != '401' ] && [ "$code" != '403' ]; then
+            echo "::error::Unauthenticated P2P quote accepted: $code"
+            exit 1
+          fi
+          node - <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict');
+          const index=fs.readFileSync('/tmp/live_index.html','utf8');
+          const js=fs.readFileSync('/tmp/live_p2p.js','utf8');
+          const css=fs.readFileSync('/tmp/live_p2p.css','utf8');
+          const health=JSON.parse(fs.readFileSync('/tmp/live_health.json','utf8'));
+          const checks=[
+            ['updated JS cache URL',index.includes('p2p.js?v=20261119-unique')],
+            ['updated CSS cache URL',index.includes('p2p.css?v=20261119-unique')],
+            ['amount quote endpoint',js.includes("invoice/quote")],
+            ['exact transfer quote banner',js.includes('p2p-quote-banner')],
+            ['compact occupancy hint',js.includes('p2p-quote-alert')],
+            ['payment back cancellation warning',js.includes("renderCancel();")],
+            ['original gradient',css.includes('#p2p-next')],
+            ['cancel illustration',css.includes('p2p-cancel-icon')],
+            ['genuine Telegram payment backend',health.paymentsEnabled===true]
+          ];
+          for(const [label,ok]of checks){assert.ok(ok,'LIVE FAILED: '+label);console.log('PASS:',label)}
+          JS
+      - name: Check D1 0012 migration and bank-event guard still exist (read-only)
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          mkdir -p /tmp/arslan_cfg
+          unzip -p "$ZIP" arslan-boost-cloudflare/wrangler.production.jsonc > /tmp/arslan_cfg/wrangler.production.jsonc
+          cd /tmp/arslan_cfg
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM pragma_table_info('invoices') WHERE name='requested_amount'" > /tmp/p2p_live_col.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('p2p_paid_requires_bank_event','p2p_match_incoming','p2p_settle_on_paid')" > /tmp/p2p_live_guards.json
+          node - <<'JS'
+          const fs=require('node:fs'),assert=require('node:assert/strict');
+          const rows=p=>(Array.isArray(JSON.parse(fs.readFileSync(p,'utf8')))?JSON.parse(fs.readFileSync(p,'utf8')):[JSON.parse(fs.readFileSync(p,'utf8'))]).flatMap(x=>x.results||[]);
+          assert.equal(rows('/tmp/p2p_live_col.json')[0]?.name,'requested_amount');
+          const names=new Set(rows('/tmp/p2p_live_guards.json').map(x=>x.name));
+          for(const k of ['p2p_paid_requires_bank_event','p2p_match_incoming','p2p_settle_on_paid'])assert.ok(names.has(k),k);
+          console.log('PASS: live D1 requested amount stored and verified-bank-event guard retained');
+          JS
