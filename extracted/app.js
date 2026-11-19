@@ -434,8 +434,13 @@
     const transfer = state.p2pPrivate && state.payments.find(payment =>
       payment.invoice_id && cardMethods.includes(payment.method) && payment.status === 'pending'
       && (kind === 'payment' ? payment.id === item.id : kind === 'boost' ? payment.order_id === item.id : payment.donat_order_id === item.id));
-    const stars = kind === 'payment' && typeof tg?.openInvoice === 'function' &&
-      item.kind === 'topup' && item.method === 'stars' && item.status === 'pending';
+    const starsPayment = kind === 'payment' ? item : state.payments.find(payment =>
+      payment.method === 'stars' && payment.status === 'pending' && payment.kind === 'order' &&
+      (kind === 'boost' ? String(payment.order_id) === String(item.id)
+        : kind === 'donat' && String(payment.donat_order_id) === String(item.id)));
+    const stars = typeof tg?.openInvoice === 'function' &&
+      starsPayment?.method === 'stars' && starsPayment.status === 'pending' &&
+      ['topup','order'].includes(starsPayment.kind);
     showSheet('history-entry', `<div class="checkout-summary">
       <div><strong>${escape(description)}</strong></div>
       ${kind === 'boost' && item.game_id ? '<div>ID: ' + escape(item.game_id) + '</div>' : ''}
@@ -469,7 +474,7 @@
       const button = event.currentTarget;
       button.disabled = true;
       try {
-        const payment = await api('payment/status',{paymentId:item.id,resume:true,lang:state.lang});
+        const payment = await api('payment/status',{paymentId:starsPayment.id,resume:true,lang:state.lang});
         if (button.isConnected) showStarsPayment({payment, back: () => openHistoryEntry(kind,id)});
       } catch (error) {
         toast(errorMessage(error));
