@@ -1,4 +1,4 @@
-name: Verify live P2P response codes and one retry (read-only)
+name: Live verify wallet rescue, unauthorized bank denial, financial guards
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -32,6 +32,14 @@ jobs:
             echo "::error::Unauthenticated P2P quote accepted: $code"
             exit 1
           fi
+          for route in invoice/options invoice/recover; do
+            code="$(curl -sS --max-time 20 -o /tmp/wallet_unauth -w '%{http_code}' \
+              -H 'Content-Type: application/json' --data '{}' "$URL/api/$route")"
+            if [ "$code" != '401' ] && [ "$code" != '403' ]; then
+              echo "::error::Unauthorized access to $route returned HTTP $code"; exit 1
+            fi
+            echo "PASS: protected $route rejects unauthenticated requests"
+          done
           node - <<'JS'
           const fs=require('node:fs'),assert=require('node:assert/strict');
           const index=fs.readFileSync('/tmp/live_index.html','utf8');
