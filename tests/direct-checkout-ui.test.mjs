@@ -68,5 +68,7 @@ test('All DONAT product sheets use visual viewport and keep Done button outside 
 test('Order exact amount allocation tries +100 steps and preserves listed price',()=>{
   assert.match(p2p,/TRANSFER_STEPS = \[0,100,200,300,400,500,600,700,800,900\]/);
   assert.doesNotMatch(p2p,/order \? \[0\] : TRANSFER_STEPS/);
+  assert.ok(p2p.includes("json_each('${JSON.stringify(TRANSFER_STEPS)}')"));
+  assert.ok(!p2p.includes("SELECT '+step+' AS bump"), 'D1 crashes on compound SELECT candidate list');
   assert.match(store,/requested_amount = \?\)/);
 });
