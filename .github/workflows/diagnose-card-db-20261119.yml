@@ -1,4 +1,4 @@
-name: Inspect live D1 order states without user identifiers
+name: Identify orphan pending DONAT card or Stars request without exposing users
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT (SELECT COUNT(*) FROM invoices) AS invoices_total, (SELECT COUNT(*) FROM invoices WHERE created_at > strftime('%s','now')-7200) AS invoices_2h, (SELECT COUNT(*) FROM invoices WHERE status='expired') AS invoices_expired, (SELECT COUNT(*) FROM invoices WHERE status='pending' AND expires_at < strftime('%s','now')) AS invoices_overdue, (SELECT COUNT(*) FROM donat_orders) AS donat_total, (SELECT COUNT(*) FROM donat_orders WHERE status='pending') AS donat_pending, (SELECT COUNT(*) FROM orders WHERE status='pending') AS boost_pending" > /tmp/live-metrics.json || { cat /tmp/live-metrics.json; exit 1; }
+            --command "SELECT o.status AS order_status, COALESCE(p.method,'none') AS method, COALESCE(p.status,'none') AS payment_status, COALESCE(i.status,'none') AS invoice_status, CASE WHEN o.created_at < strftime('%s','now')-3600 THEN 'older_1h' ELSE 'last_1h' END AS age, COUNT(*) AS total FROM donat_orders o LEFT JOIN payments p ON p.donat_order_id=o.id LEFT JOIN invoices i ON i.order_payment_id=p.id WHERE o.status NOT IN ('fulfilled','cancelled','rejected') GROUP BY o.status,p.method,p.status,i.status,age" > /tmp/live-metrics.json || { cat /tmp/live-metrics.json; exit 1; }
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
             --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 2" > /tmp/live-migration.json
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
