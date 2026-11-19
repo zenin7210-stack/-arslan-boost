@@ -29,6 +29,11 @@
       inProgress: 'Сначала завершите текущий перевод.',
       noCard: 'Реквизиты изменились. Если вы уже перевели деньги, откройте проверку.',
       history: 'Последняя заявка', noExtra: 'Без дополнительных сумм', loading: 'Загружаем способы оплаты…',
+      quote: 'Предварительная сумма перевода', quoteBadge: 'Точная сумма закрепится после продолжения',
+      quoteLoading:'Подбираем свободную сумму…', quoteUnavailable:'Сейчас нет свободной суммы. Попробуйте позже.',
+      quoteChanged:'Эта сумма занята. Для вас подобрана сумма:',
+      quoteHint:'Если сумма занята, система предложит ближайшую свободную. Уточните сумму на следующем экране.',
+      creditedAll:'На баланс будет зачислено',
     },
     uz: {
       wallet: 'Karta orqali to‘ldirish', balance: 'O‘tkazmalar balansi', amount: 'To‘ldirish summasi',
@@ -58,6 +63,11 @@
       inProgress: 'Avval joriy o‘tkazmani yakunlang.',
       noCard: 'Rekvizitlar o‘zgargan. Pul yuborgan bo‘lsangiz, tekshiruvni oching.',
       history: 'So‘nggi ariza', noExtra: 'Qo‘shimcha so‘m qo‘shilmaydi', loading: 'To‘lov usullari yuklanmoqda…',
+      quote: 'Taxminiy o‘tkazma summasi', quoteBadge: 'Davom etganda summa biriktiriladi',
+      quoteLoading:'Bo‘sh summa tanlanmoqda…', quoteUnavailable:'Hozir bo‘sh summa yo‘q. Keyinroq urinib ko‘ring.',
+      quoteChanged:'Bu summa band. Siz uchun yangi summa:',
+      quoteHint:'Summa band bo‘lsa, tizim yaqin bo‘sh summani tanlaydi. Aniq summa keyingi oynada tasdiqlanadi.',
+      creditedAll:'Balansga tushadigan summa',
     },
   };
 
@@ -124,79 +134,115 @@
     }
 
     function renderForm() {
+      let quote, quoting = false, creating = false, quoteTimer, quoteSerial = 0;
       const version = show(`
-        <div class="p2p-amount"><div><span>${e(t('balance'))}</span><strong>${e(money(options.balance))}</strong></div></div>
+        <div class="p2p-amount p2p-quote-banner" aria-live="polite">
+          <div><span>${e(t('quote'))}</span><strong id="p2p-quote-amount">—</strong></div>
+          <span class="p2p-quote-badge">${e(t('quoteBadge'))}</span>
+        </div>
         <div><label for="p2p-value">${e(t('amount'))}</label>
-        <div data-keyboard-inline><input id="p2p-value" inputmode="numeric" enterkeyhint="done"
-          maxlength="9" autocomplete="off" value="${e(amount)}"></div></div>
+        <div class="p2p-input-row" data-keyboard-inline>
+          <input id="p2p-value" inputmode="numeric" enterkeyhint="done"
+            maxlength="9" autocomplete="off" value="${e(amount)}">
+          <span class="p2p-input-tag">${e(t('amount'))}</span>
+        </div></div>
         <div class="p2p-presets">${[10000, 50000, 100000].map(n =>
           `<button class="p2p-chip" type="button" data-p2p-amount="${n}">${e(ui.money(n))}</button>`).join('')}</div>
         <fieldset><legend>${e(t('method'))}</legend><div class="p2p-methods">
           ${options.methods.map(id => `<button class="p2p-method" type="button" data-p2p-method="${e(id)}">
-            <img src="assets/${e(id)}.svg" alt=""><strong>${e(id.toUpperCase())}</strong>
-            <span>${e(t('methodNote'))}</span></button>`).join('')}
+            <img src="assets/${e(id)}.svg" alt=""><span class="p2p-method-info">
+              <strong>${e(id.toUpperCase())}</strong><span>${e(t('methodNote'))}</span>
+            </span></button>`).join('')}
         </div>${options.methods.length ? '' : `<p class="p2p-muted">${e(t('unavailable'))}</p>`}</fieldset>
+        <div class="p2p-quote-alert" id="p2p-quote-alert" role="status" hidden></div>
+        <p class="p2p-quote-hint">${e(t('quoteHint'))}</p>
         <p class="p2p-feedback" role="status"></p>
-        <button class="p2p-action" type="button" id="p2p-next">${e(t('next'))}</button>
-        ${options.latest && !options.active ? `<button class="secondary" type="button" id="p2p-latest">${e(t('history'))} #${options.latest.id}</button>` : ''}
+        <button class="p2p-action p2p-next-button" type="button" id="p2p-next">${e(t('next'))}</button>
         <button class="secondary" type="button" id="p2p-back">${e(t('back'))}</button>`);
-      const field = within('#p2p-value'), next = within('#p2p-next');
-      const update = () => {
-        next.disabled = !validAmount() || !method;
-        ui.body.querySelectorAll('[data-p2p-amount]').forEach(button =>
-          button.setAttribute('aria-pressed', String(button.dataset.p2pAmount === amount)));
-        ui.body.querySelectorAll('[data-p2p-method]').forEach(button =>
-          button.setAttribute('aria-pressed', String(button.dataset.p2pMethod === method)));
+      const field=within('#p2p-value'), next=within('#p2p-next');
+      const label=within('#p2p-quote-amount'), alert=within('#p2p-quote-alert');
+      const update=()=>{
+        next.disabled=creating||quoting||!validAmount()||!method||!quote?.available;
+        ui.body.querySelectorAll('[data-p2p-amount]').forEach(button=>
+          button.setAttribute('aria-pressed',String(button.dataset.p2pAmount===amount)));
+        ui.body.querySelectorAll('[data-p2p-method]').forEach(button=>
+          button.setAttribute('aria-pressed',String(button.dataset.p2pMethod===method)));
       };
-      const change = value => {
-        if (value !== amount) {
-          key = null;
-          within('.p2p-feedback').textContent = '';
+      const requestQuote=async ()=>{
+        const current=++quoteSerial;
+        quote=null;
+        alert.hidden=true;
+        if(!active(version)||!validAmount()||!method){label.textContent='—';update();return;}
+        quoting=true;
+        label.textContent=t('quoteLoading');
+        update();
+        try{
+          const response=await ui.api('invoice/quote',{amount:amount.replace(/[\s\u00A0\u202F]/gu,''),method});
+          if(!active(version)||current!==quoteSerial)return;
+          quote=response;
+          label.textContent=response.available ? money(response.uniqueAmount) : t('quoteUnavailable');
+          if(response.available&&response.uniqueAmount!==Number(amount.replace(/[\s\u00A0\u202F]/gu,''))){
+            alert.hidden=false;
+            alert.innerHTML='<span class="p2p-quote-check" aria-hidden="true">✓</span><span>'+
+              e(t('quoteChanged'))+' <strong>'+e(money(response.uniqueAmount))+'</strong></span>';
+          }
+          if(response.existing && (response.method!==method || response.baseAmount!==Number(amount)))
+            quote={available:false};
+        }catch(error){
+          if(!active(version)||current!==quoteSerial)return;
+          label.textContent='—';
+          warning(error);
+        }finally{
+          if(active(version)&&current===quoteSerial){quoting=false;update();}
         }
-        amount = value;
-        update();
       };
-      field.oninput = () => change(field.value);
-      ui.body.querySelectorAll('[data-p2p-amount]').forEach(button => button.onclick = () => {
-        ui.dismissKeyboard();
-        field.value = button.dataset.p2pAmount;
-        change(field.value);
-      });
-      ui.body.querySelectorAll('[data-p2p-method]').forEach(button => button.onclick = () => {
-        if (method !== button.dataset.p2pMethod) key = null;
-        method = button.dataset.p2pMethod;
-        ui.dismissKeyboard();
+      const scheduleQuote=()=>{
+        clearTimeout(quoteTimer);
+        quoteSerial++;
+        quote=null;
+        label.textContent='—';
+        alert.hidden=true;
         update();
+        if(active(version)&&validAmount()&&method)quoteTimer=setTimeout(requestQuote,240);
+      };
+      const change=value=>{
+        if(value!==amount){key=null;within('.p2p-feedback').textContent='';}
+        amount=value;
+        scheduleQuote();
+      };
+      field.oninput=()=>change(field.value);
+      ui.body.querySelectorAll('[data-p2p-amount]').forEach(button=>button.onclick=()=>{
+        ui.dismissKeyboard();field.value=button.dataset.p2pAmount;change(field.value);
       });
-      next.onclick = async () => {
-        if (next.disabled) return;
-        next.disabled = true;
-        const controls = [...ui.body.querySelectorAll('input, [data-p2p-amount], [data-p2p-method]')];
-        controls.forEach(control => { control.disabled = true; });
+      ui.body.querySelectorAll('[data-p2p-method]').forEach(button=>button.onclick=()=>{
+        if(method!==button.dataset.p2pMethod)key=null;
+        method=button.dataset.p2pMethod;ui.dismissKeyboard();scheduleQuote();
+      });
+      next.onclick=async()=>{
+        if(next.disabled||creating)return;
+        creating=true;
+        next.disabled=true;
+        clearTimeout(quoteTimer);
+        const controls=[...ui.body.querySelectorAll('input, [data-p2p-amount], [data-p2p-method]')];
+        controls.forEach(control=>{control.disabled=true;});
         ui.dismissKeyboard();
         key ||= ui.requestKey();
-        try {
-          const result = await ui.api('invoice', { amount: amount.replace(/[\s\u00A0\u202F]/gu,''), method, requestId: key, lang: ui.lang() });
-          if (!active(version)) return;
-          invoice = result;
-          deadline = 0;
+        try{
+          const result=await ui.api('invoice',{amount:amount.replace(/[\s\u00A0\u202F]/gu,''),method,requestId:key,lang:ui.lang()});
+          if(!active(version))return;
+          invoice=result;
+          deadline=0;
           renderInvoice();
-        } catch (error) {
-          if (active(version)) {
-            controls.forEach(control => { control.disabled = false; });
-            update();
-            warning(error);
+        }catch(error){
+          if(active(version)){
+            creating=false;controls.forEach(control=>{control.disabled=false;});
+            warning(error);scheduleQuote();
           }
         }
       };
-      within('#p2p-back').onclick = ui.back;
-      const latest = within('#p2p-latest');
-      if (latest) latest.onclick = () => {
-        invoice = options.latest;
-        deadline = 0;
-        renderInvoice();
-      };
-      update();
+      within('#p2p-back').onclick=ui.back;
+      if(!method&&options.methods.length)method=options.methods[0];
+      scheduleQuote();
     }
 
     function remainingClock(seconds) {
