@@ -336,7 +336,8 @@
   function statusName(status) {
     const labels = {
       paid: 'paidStatus', approved: 'paidStatus', rejected: 'rejectedStatus',
-      pending: 'pendingStatus', review: 'reviewedStatus', in_progress: 'inProgress', fulfilled: 'fulfilledStatus', refunded:'rejectedStatus'
+      pending: 'pendingStatus', review: 'reviewedStatus', in_progress: 'inProgress', fulfilled: 'fulfilledStatus',
+      refunded:'rejectedStatus', cancelled:'rejectedStatus', expired:'rejectedStatus', failed:'rejectedStatus'
     };
     return t(labels[status] || 'unknownStatus');
   }
