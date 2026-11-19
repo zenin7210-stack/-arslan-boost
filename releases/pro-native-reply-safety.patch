@@ -1,0 +1,28 @@
+diff --git a/src/support-chat.mjs b/src/support-chat.mjs
+index 7ec9e28..39353a2 100644
+--- a/src/support-chat.mjs
++++ b/src/support-chat.mjs
+@@ -144,14 +144,19 @@ export async function supportCustomerMessage(env,ctx,store,config,message) {
+ export async function supportAdminMessage(env,ctx,store,config,message) {
+   const admin=telegramId(message.from?.id);
+   if(!admin||!isAdmin(env,admin)||message.chat?.id!==admin||typeof message.text!=='string'||message.text.startsWith('/'))return false;
+-  const session=await store.first(`SELECT user_id FROM support_reply_sessions
+-    WHERE admin_id=? AND expires_at>?`,admin,now());
+-  let userId=session?.user_id;
+-  if(!userId&&message.reply_to_message?.message_id) {
++  // Native Telegram Reply to a specific bot notification is more precise than
++  // a previously selected temporary session. Never route it to another client.
++  let userId;
++  if(message.reply_to_message?.message_id) {
+     const ref=await store.first(`SELECT user_id FROM support_notice_refs
+       WHERE admin_id=? AND telegram_message_id=?`,admin,message.reply_to_message.message_id);
+     userId=ref?.user_id;
+   }
++  if(!userId) {
++    const session=await store.first(`SELECT user_id FROM support_reply_sessions
++      WHERE admin_id=? AND expires_at>?`,admin,now());
++    userId=session?.user_id;
++  }
+   if(!userId)return false;
+   try {
+     const result=await addAdminMessage(env,ctx,store,config,admin,userId,message.text,`admin_${admin}_${message.message_id}`);
