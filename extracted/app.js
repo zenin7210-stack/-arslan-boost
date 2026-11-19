@@ -159,14 +159,17 @@
     starsInputHint:'Количество Stars', methodBalance:'Баланс', cardCheck:'Перевод на карту',
     cardNotReady:'Перевод на карту временно недоступен.', boostPaidNotice:'Заказ будет передан администратору после подтверждения платежа.'
   });
-  const paymentMethodTiles = (selected, forOrder = false) => `<div class="arslan-payment-grid" role="group" aria-label="${escape(t('paymentSelect'))}">
+  const paymentMethodTiles = (selected, forOrder=false, enabled=()=>true) =>
+    `<div class="arslan-payment-grid" role="group" aria-label="${escape(t('paymentSelect'))}">
     ${['uzcard','humo','stars'].map(method => {
-      const last=method==='balance'||method==='stars';
-      const icon=last ? `<span class="arslan-payment-symbol ${method}">${method==='stars'?'★':'◈'}</span>`
-        : `<img src="assets/${method}.svg" alt="" width="36" height="36">`;
-      return `<button class="arslan-payment-tile${selected===method?' selected':''}" type="button" data-payment-choice="${method}" aria-pressed="${String(selected===method)}">
-         ${icon}<strong>${last ? method==='stars'?'Telegram Stars':escape(t('methodBalance')) : method.toUpperCase()}</strong>
-         <small>${method==='stars'?'Stars':method==='balance'?escape(t('balance')):escape(t('cardCheck'))}</small></button>`;
+      const ready=enabled(method);
+      const icon=method==='stars'?'<span class="arslan-payment-symbol stars">★</span>'
+        :`<img src="assets/${method}.svg" alt="" width="36" height="36">`;
+      return `<button class="arslan-payment-tile${selected===method?' selected':''}"
+        type="button" data-payment-choice="${method}" aria-pressed="${String(selected===method)}" ${ready?'':'disabled'}>
+        ${icon}<strong>${method==='stars'?'Telegram Stars':method.toUpperCase()}</strong>
+        <small>${ready?(method==='stars'?'Stars':escape(t('cardCheck')))
+          :escape(state.lang==='ru'?'Недоступно':'Mavjud emas')}</small></button>`;
     }).join('')}</div>`;
   const cardMethods = ['uzcard', 'humo'];
   const launchSection = new URLSearchParams(location.search).get('section');
@@ -436,12 +439,12 @@
       payment.invoice_id && cardMethods.includes(payment.method) && payment.status === 'pending'
       && (kind === 'payment' ? payment.id === item.id : kind === 'boost' ? payment.order_id === item.id : payment.donat_order_id === item.id));
     const starsPayment = kind === 'payment' ? item : state.payments.find(payment =>
-      payment.method === 'stars' && payment.status === 'pending' && payment.kind === 'order' &&
+      payment.method === 'stars' && payment.status === 'pending' && ['order','donat'].includes(payment.kind) &&
       (kind === 'boost' ? String(payment.order_id) === String(item.id)
         : kind === 'donat' && String(payment.donat_order_id) === String(item.id)));
     const stars = typeof tg?.openInvoice === 'function' &&
       starsPayment?.method === 'stars' && starsPayment.status === 'pending' &&
-      ['topup','order'].includes(starsPayment.kind);
+      ['topup','order','donat'].includes(starsPayment.kind);
     showSheet('history-entry', `<div class="checkout-summary">
       <div><strong>${escape(description)}</strong></div>
       ${kind === 'boost' && item.game_id ? '<div>ID: ' + escape(item.game_id) + '</div>' : ''}
@@ -553,7 +556,7 @@
     if(!c.method||!available(c.method)) c.method=['uzcard','humo','stars'].find(available)||'stars';
     showSheet('checkout', orderSummary(c)+`
       <h3 class="arslan-payment-subhead">${escape(t('paymentSelect'))}</h3>
-      ${paymentMethodTiles(c.method, true)}
+      ${paymentMethodTiles(c.method, true, available)}
       ${c.method==='stars'?paymentTerms(available('stars')):''}
       <p class="arslan-wallet-hint">${escape(t('boostPaidNotice'))}</p>
       <button class="wallet-continue" type="button" id="payment-continue">${escape(t('continue'))}</button>
@@ -937,6 +940,12 @@
   const shop = window.initArslanShop({
     config,
     transferOrderChoices, bindTransferOrder,
+    paymentMethodTiles,
+    paymentReady: method => method==='stars'
+      ? starsEnabled(config.orderStarsRate,config.orderStarsMax) : state.p2pMethods.includes(method),
+    paymentTermsHtml: enabled => paymentTerms(enabled),
+    startCardOrder: (payload,button,refresh) => requestTransfer('donat/create',payload,button,refresh),
+    onStarsOrder: (payment,back) => showStarsPayment({kind:'donat',payment,back}),
     syncState, walletBalance: () => state.balance,
     lang: () => state.lang,
     api,
