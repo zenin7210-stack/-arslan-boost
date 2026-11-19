@@ -35,7 +35,7 @@ test('No new wallet top-up endpoints, old invoices and balances remain inspectab
 test('DONAT Stars orders have genuine Telegram invoice and atomic settlement',()=>{
   assert.match(worker,/const byStars = data\.paymentMethod === "stars"/);
   assert.match(worker,/\["topup","order","donat"\]\.includes\(payment\.kind\)/);
-  assert.match(store,/kind IN \('topup','order','donat'\)/);
+  assert.match(store,/kind IN \('order','donat'\)/);
   assert.match(store,/AND NOT EXISTS \(SELECT 1 FROM payments WHERE telegram_charge_id = \?\)/);
   assert.match(worker,/answerPreCheckoutQuery/);
   assert.match(worker,/createInvoiceLink/);
