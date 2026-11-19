@@ -1,4 +1,4 @@
-name: Isolate synthetic bank settlement failure after 0013
+name: Pinpoint D1 bank trigger failure in synthetic settlement fixture
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -63,4 +63,5 @@ jobs:
           node --check tests/p2p.test.mjs
           # Synthetic in-memory fixture only. Never ship this diagnostic.
           sed -i 's/console.error("ARSLAN BOOST Worker failed");/console.error("TEST-ONLY error type:", error?.name, error?.message);/' src/worker.mjs
+          sed -i 's/return json({ error: "service_unavailable" }, 503);/return json({ error: "service_unavailable", detail: String(error?.message).slice(0,160) }, 503);/' src/worker.mjs
           npm test
