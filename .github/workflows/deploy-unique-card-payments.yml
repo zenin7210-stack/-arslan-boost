@@ -1,4 +1,4 @@
-name: ARSLAN BOOST publish owner invoice recovery and direct bank routing
+name: Publish safe P2P failure-stage reporting without changing balances
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -81,6 +81,8 @@ jobs:
           assert.ok(backend.includes('path === "invoice/recover"'));
           assert.ok(backend.includes('const active = current;'));
           assert.ok(fs.readFileSync('src/worker.mjs','utf8').includes('Card invoices must not depend on Stars'));
+          assert.ok(fs.readFileSync('src/worker.mjs','utf8').includes('p2p_handler_'));
+          assert.ok(fs.readFileSync('src/worker.mjs','utf8').includes('p2p_auth_internal'));
           assert.ok(p2p.includes("errorCode:'Xato kodi'"));
           assert.ok(p2p.includes('await loadOptionsSafely()'));
           assert.ok(p2p.includes('network_timeout'));
