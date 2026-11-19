@@ -1,0 +1,148 @@
+name: ARSLAN BOOST — guarded checkout UI release 2026-11-20
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/deploy-checkout-ui-20261120.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Recover exactly previously tested production release
+        uses: actions/download-artifact@v4
+        with:
+          name: arslan-direct-order-tested
+          run-id: 44595628857
+          repository: zenin7210-stack/-arslan-boost
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+
+      - name: Verify frozen baseline and apply isolated payment UI changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            '8ef30201f0b9a60fe8ed1f5abef4aa89868d3d60dc279108f28dd058097628ef' 'release/src/worker.mjs' \
+            'db6b5524bc28bbb5258e59ca8a292ad2555e2fdb4dd5a5ffb600ddafd3d15a97' 'release/public/assets/p2p.js' \
+            '5abec56a8932e47a849b4b81e9fb3157a4c4a6d6224174e75371f9477cc707f0' 'release/wrangler.production.jsonc' \
+            '5ebc005abf37d75e172866a2d233cdc9ffbe41d9d145abc2b80f6dfffdd3fc4d' 'release/public/index.html' | sha256sum --check --status
+          base64 --decode fixes/pro-ui-payment-20261120.py.b64 > /tmp/arslan-pro-ui.py
+          printf '%s  %s\n' \
+            '8828d6eef1660de86881a2c0c64a4412e31e272a5cdb37598ed6c0cf8295e0d5' '/tmp/arslan-pro-ui.py' | sha256sum --check --status
+          python3 /tmp/arslan-pro-ui.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('release/public/index.html')
+          s=p.read_text()
+          old='assets/p2p.js?v=20261119-exacts4'
+          assert s.count(old)==1, 'Unexpected asset version — abort'
+          p.write_text(s.replace(old,'assets/p2p.js?v=20261120-pro-ui1'))
+          PY
+          printf '%s  %s\n' \
+            '0c01e02b89bb2f1d58d8b2d1c3cf673a796301f25161b2c304c6427461c10685' 'release/public/assets/p2p.js' \
+            'e5054bd537557e9d62724e6cdccbb3772e365cada499d15309703e57add8708d' 'release/tests/pro-payment-ui.test.mjs' \
+            '8611c0bc686881d4d1d2d28416e183ae5e1a495f8ce52c5626acc87c73f976e3' 'release/public/index.html' | sha256sum --check --status
+          node -e "const c=JSON.parse(require('fs').readFileSync('release/wrangler.production.jsonc'));if(c.name!=='arslan-boost-bot'||c.d1_databases?.[0]?.database_name!=='arslan-boost-payments'||c.keep_vars!==true||Object.hasOwn(c.vars||{},'P2P_MODE'))process.exit(1)"
+          echo 'PASS: exact frozen baseline, UI patch, cache bust, production targets'
+
+      - name: Run syntax and checkout/payment regression tests
+        working-directory: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          npm test
+          echo 'PASS: static JS syntax and test suite. Skipped tests are NOT considered passed.'
+
+      - name: Reject deployment over an unexpected live UI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 2 --max-time 20 \
+            'https://arslan-boost-bot.zenin7210.workers.dev/assets/p2p.js?v=20261119-exacts4' \
+            > /tmp/arslan-live-p2p-before.js
+          printf '%s  %s\n' \
+            'db6b5524bc28bbb5258e59ca8a292ad2555e2fdb4dd5a5ffb600ddafd3d15a97' '/tmp/arslan-live-p2p-before.js' | sha256sum --check --status
+          echo 'PASS: live asset matches precisely tested previous version'
+
+      - name: Check Cloudflare payment mode and D1 migration ledger (read-only)
+        working-directory: release
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'Missing Cloudflare token'; exit 1; }
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' \
+            > /tmp/arslan-worker-settings.json
+          node - <<'JS'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/arslan-worker-settings.json','utf8'));
+          if(!j.success)throw Error('Cloudflare settings not readable');
+          const b=j.result?.bindings||[];
+          if(!b.some(x=>x.name==='P2P_MODE'&&x.type==='plain_text'&&x.text==='private'))
+            throw Error('Unexpected bank payment mode; deployment stopped');
+          for(const key of ['ADMIN_ID','P2P_CARDS','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'])
+            if(!b.some(x=>x.name===key))throw Error('Missing required private setting '+key);
+          console.log('PASS: original private P2P mode and required bindings unchanged');
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote \
+            --config wrangler.production.jsonc --json \
+            --command 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' \
+            > /tmp/arslan-ledger.json
+          node - <<'JS'
+          const fs=require('fs');
+          const v=JSON.parse(fs.readFileSync('/tmp/arslan-ledger.json','utf8'));
+          const rows=(Array.isArray(v)?v:[v]).flatMap(x=>x.results||[]);
+          if(rows[0]?.name!=='0014_multiple_orders.sql')
+            throw Error('Production D1 migration differs; stopped safely');
+          console.log('PASS: D1 migration 0014 verified; no database changes requested');
+          JS
+
+      - name: Deploy UI-only delta with unchanged Worker logic and secrets
+        working-directory: release
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo 'Cloudflare Worker/assets deployment completed without D1 migrations'
+
+      - name: Smoke-check published UI and backend without creating a payment
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 25 \
+            'https://arslan-boost-bot.zenin7210.workers.dev/assets/p2p.js?v=20261120-pro-ui1' \
+            > /tmp/arslan-live-p2p-after.js
+          printf '%s  %s\n' \
+            '0c01e02b89bb2f1d58d8b2d1c3cf673a796301f25161b2c304c6427461c10685' '/tmp/arslan-live-p2p-after.js' | sha256sum --check --status
+          curl --fail --silent --show-error --max-time 25 \
+            'https://arslan-boost-bot.zenin7210.workers.dev/healthz' \
+            > /tmp/arslan-pro-ui-health.json
+          node - <<'JS'
+          const fs=require('fs');
+          const j=JSON.parse(fs.readFileSync('/tmp/arslan-pro-ui-health.json','utf8'));
+          if(!j.ok)throw Error('Production health endpoint unhealthy');
+          console.log('PASS: patched payment UI live, backend reports healthy');
+          JS
