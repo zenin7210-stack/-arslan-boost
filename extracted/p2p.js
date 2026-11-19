@@ -256,7 +256,7 @@
         <div class="p2p-amount"><div><span>${e(t('exact'))}</span><strong>${e(money(invoice.uniqueAmount))}</strong><small class="p2p-no-extra">${e(t('noExtra'))}</small></div>
           <button type="button" class="p2p-copy" id="p2p-copy-sum">${e(t('copy'))}</button></div>
         ${invoice.baseAmount !== invoice.uniqueAmount
-          ? `<p class="p2p-muted">${e(t('help'))} · ${e(money(invoice.baseAmount))}</p>` : ''}
+          ? `<p class="p2p-muted">${e(t('creditedAll'))}: ${e(money(invoice.uniqueAmount))}</p>` : ''}
         <div class="p2p-progress"><div><span>${e(t('expires'))}</span><time id="p2p-clock">10:00</time></div>
           <progress id="p2p-progress" max="600" value="600" aria-label="${e(t('expires'))}"></progress></div>
         ${card ? `<div class="p2p-card">
@@ -269,15 +269,15 @@
         <ul class="p2p-rules"><li>${e(t('rules1'))}</li><li>${e(t('rules2'))}</li></ul>
         <p class="p2p-feedback" role="status"></p>
         <button type="button" class="p2p-action" id="p2p-paid">${e(t('transfer'))}</button>
-        ${invoice.canCancel ? `<button type="button" class="secondary" id="p2p-cancel">${e(t('cancel'))}</button>` : ''}
         <button type="button" class="secondary" id="p2p-return">${e(t('back'))}</button>`,
       invoice.method.toUpperCase());
       copy(within('#p2p-copy-sum'), String(invoice.uniqueAmount));
       if (card) copy(within('#p2p-copy-card'), card);
       within('#p2p-paid').onclick = () => startCheck(version);
-      const cancel = within('#p2p-cancel');
-      if (cancel) cancel.onclick = renderCancel;
-      within('#p2p-return').onclick = returnTo;
+      within('#p2p-return').onclick = () => {
+        if (invoice.canCancel && invoice.status === 'pending' && !invoice.checkedAt) renderCancel();
+        else returnTo();
+      };
       const end = Date.now() + Math.max(0, invoice.expiresAt - invoice.serverTime) * 1000;
       const refreshClock = () => {
         if (!active(version)) return;
@@ -327,8 +327,11 @@
     }
 
     function renderCancel() {
-      const version = show(`<div class="p2p-check"><h3>${e(t('cancelTitle'))}</h3>
-        <p class="p2p-muted">${e(t('cancelNote'))}</p></div>
+      const version = show(`<div class="p2p-check p2p-cancel-check">
+          <span class="p2p-cancel-icon" aria-hidden="true">!</span>
+          <h3>${e(t('cancelTitle'))}</h3>
+          <p class="p2p-muted">${e(t('cancelNote'))}</p>
+        </div>
         <p class="p2p-feedback" role="status"></p>
         <button type="button" class="p2p-action" id="p2p-cancel-yes">${e(t('cancelConfirm'))}</button>
         <button type="button" class="secondary" id="p2p-cancel-back">${e(t('cancelBack'))}</button>`);
@@ -342,8 +345,10 @@
           invoice = result;
           key = null;
           if (options) options.active = null;
-          ui.sync();
-          renderCheck();
+          await ui.sync();
+          if (!active(version)) return;
+          if (result.purpose === 'order') returnTo();
+          else open(method);
         } catch (error) {
           if (active(version)) {
             yes.disabled = false;
