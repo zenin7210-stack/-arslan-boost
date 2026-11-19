@@ -1,4 +1,4 @@
-name: Validate D1 settlement trigger for alternate +100 order amount
+name: Isolate synthetic bank settlement failure after 0013
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -61,4 +61,6 @@ jobs:
           node /tmp/retire-wallet-tests.mjs tests/p2p.test.mjs
           cat /tmp/direct-orders.snippet >> tests/p2p.test.mjs
           node --check tests/p2p.test.mjs
+          # Synthetic in-memory fixture only. Never ship this diagnostic.
+          sed -i 's/console.error("ARSLAN BOOST Worker failed");/console.error("TEST-ONLY error type:", error?.name, error?.message);/' src/worker.mjs
           npm test
