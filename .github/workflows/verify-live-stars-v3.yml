@@ -1,0 +1,37 @@
+name: Verify live BOOST Stars checkout (read only)
+on:
+  push:
+    branches: [fix/boost-stars-2026-11-19]
+    paths: [.github/workflows/verify-live-stars-v3.yml]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inspect public Worker API and frontend; no payments
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL=https://arslan-boost-bot.zenin7210.workers.dev
+          curl --fail --silent --show-error --location --max-time 25 "$URL/api/config" > /tmp/boost_live_config.json
+          curl --fail --silent --show-error --location --max-time 25 "$URL/app.js" > /tmp/boost_live_app.js
+          curl --fail --silent --show-error --location --max-time 25 "$URL/healthz" > /tmp/boost_health.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('/tmp/boost_live_config.json','utf8'));
+          const h=JSON.parse(fs.readFileSync('/tmp/boost_health.json','utf8'));
+          const app=fs.readFileSync('/tmp/boost_live_app.js','utf8');
+          if(c.arslanBoostApi!==true)throw Error('Production config is not ARSLAN BOOST API');
+          if(!app.includes("['uzcard','humo','stars']"))throw Error('Live BOOST payment tiles not updated');
+          if(!app.includes("paymentMethod:'stars',acceptTerms:true"))throw Error('Live BOOST Stars checkout not deployed');
+          if(!(Number.isInteger(c.orderStarsRate)&&c.orderStarsRate>0))throw Error('Stars order rate disabled in production');
+          if(!(Number.isInteger(c.orderStarsMax)&&c.orderStarsMax>0))throw Error('Stars order max missing in production');
+          if(h.paymentsEnabled!==true)throw Error('Telegram Stars backend not enabled or webhook not registered');
+          console.log('PASS: production API and frontend updated; Telegram Stars configured and backend enabled');
+          console.log('Stars order rate configured:', c.orderStarsRate);
+          JS
