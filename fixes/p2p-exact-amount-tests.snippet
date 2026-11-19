@@ -105,3 +105,38 @@ test('an old cancelled wallet request is visible in read-only options',async()=>
   assert.equal(options.data.latest.id,first.data.id);
   assert.equal(options.data.latest.status,'cancelled');
 });
+
+test('pending bank invoice always appears in recovery, its owner can cancel and open a new one', async()=>{
+  const system=app();
+  const empty=await system.api(1,'invoice/recover',{});
+  assert.equal(empty.status,200);
+  assert.equal(empty.data.active,null);
+  const old=await system.api(1,'invoice',{amount:10000,method:'uzcard',requestId:'old-recover-001'});
+  assert.equal(old.status,200);
+  const recovered=await system.api(1,'invoice/recover',{});
+  assert.equal(recovered.status,200);
+  assert.equal(recovered.data.active.id,old.data.id);
+  assert.equal(recovered.data.active.canCancel,true);
+  const options=await system.api(1,'invoice/options',{});
+  assert.equal(options.status,200);
+  assert.equal(options.data.active.id,old.data.id);
+  const cancel=await system.api(1,'invoice/'+old.data.id+'/cancel',{});
+  assert.equal(cancel.data.status,'cancelled');
+  assert.equal((await system.api(1,'invoice/recover',{})).data.active,null);
+  const next=await system.api(1,'invoice',{amount:50000,method:'uzcard',requestId:'new-after-cancel'});
+  assert.equal(next.status,200);
+  assert.equal(next.data.status,'pending');
+});
+test('bank invoice loading bypasses Stars checkout settings but still rejects unauthenticated access',async()=>{
+  const system=app();
+  const original=system.env.DB.prepare.bind(system.env.DB);
+  system.env.DB.prepare=sql=>{
+    if(sql.includes('checkout_webhook_url'))throw Error('Simulated Stars settings outage');
+    return original(sql);
+  };
+  const result=await system.api(1,'invoice/options',{});
+  assert.equal(result.status,200);
+  assert.ok(result.data.methods.includes('uzcard'));
+  const unauthorized=await system.send('/api/invoice/recover',{},{});
+  assert.equal(unauthorized.status,401);
+});
