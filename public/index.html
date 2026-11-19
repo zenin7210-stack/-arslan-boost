@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#06101e"><title>Arslan Boost</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="config.js?v=20261110-uzcard"></script>
+  <link rel="preload" as="image" href="assets/intro-emblem.webp">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{--bg:#050d19;--panel:#08172a;--panel2:#0b1c31;--line:#183858;--cyan:#00d8ff;--blue:#087cff;--muted:#9db1cf;--white:#f5f8ff;--purple:#603cff;--safe:env(safe-area-inset-bottom,0px)}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(ellipse at 55% -15%,#0b3151 0,transparent 48%),linear-gradient(180deg,#040b15,#06111f 55%,#030a14);color:var(--white);font-family:Inter,system-ui,sans-serif;min-height:100vh}
+    button,input,select{font:inherit;color:inherit} button{cursor:pointer} .app{max-width:520px;margin:auto;padding:env(safe-area-inset-top,12px) 16px calc(100px + var(--safe));min-height:100vh;position:relative;overflow:hidden}
+    .tg-head{height:48px;display:flex;justify-content:center;align-items:center;color:#e9f1ff;font-size:13px;position:relative}.tg-head span{opacity:.65;font-size:11px;display:block;text-align:center;margin-top:2px}.tg-head strong{font-weight:600}.tg-icon{position:absolute;top:7px;border:1px solid #34516f;background:#0c192b99;border-radius:50%;height:32px;width:32px;display:grid;place-items:center;color:white;font-size:18px}.tg-icon.left{left:0}.tg-icon.right{right:0}
+    .page{display:none;animation:fade .25s ease}.page.active{display:block}@keyframes fade{from{opacity:.6;transform:translateY(5px)}to{opacity:1;transform:none}}
+    .hero{margin:10px 0 14px;height:178px;border:1px solid #057bad;border-radius:22px;background:#071a2d url('assets/hero-banner-hd.png') center/cover no-repeat;box-shadow:0 0 18px #008cff26;overflow:hidden;position:relative}.hero:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#03101b15,transparent 65%);pointer-events:none}
+    .quick{display:grid;grid-template-columns:1.12fr 1fr 1fr;gap:8px;margin:0 0 17px}.quick button{min-height:59px;padding:8px 9px;border:1px solid #087cac;border-radius:14px;background:linear-gradient(145deg,#0b1d31e8,#061222);box-shadow:inset 0 0 14px #00aaff10;display:flex;align-items:center;gap:8px;text-align:left;font-size:11px}.quick .qicon{color:var(--cyan);font-size:21px;line-height:1}.quick strong{display:block;font-size:13px;margin-top:2px}.quick .plus{margin-left:auto;border-radius:50%;background:linear-gradient(135deg,#00dcff,#0873ff);width:29px;height:29px;text-align:center;line-height:29px;font-size:20px;font-weight:700;box-shadow:0 0 12px #00c7ff55}
+    h1{font-size:23px;margin:12px 2px 12px;letter-spacing:-.5px} h2{font-size:20px;margin:22px 2px 10px}.mode-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.mode{height:78px;border:1px solid;border-radius:15px;position:relative;overflow:hidden;background:#09192b center 39%/cover no-repeat;display:flex;align-items:end;justify-content:center;padding-bottom:13px;font-weight:600;text-shadow:0 2px 7px #000;isolation:isolate}.mode:before{content:"";position:absolute;inset:0;background:linear-gradient(0deg,#020814e6,#08182d55 90%);z-index:-1}.mode.selected:after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 18px #00cfffaa;pointer-events:none}.mode[data-mode="wing"]{border-color:#00cfff;background-image:url('assets/napy.jpg')}.mode[data-mode="comp"]{border-color:#d42cff;background-image:url('assets/competitive.jpg')}.mode[data-mode="duel"]{border-color:#00d8c9;background-image:url('assets/duel.jpg')}.chosen{color:var(--cyan);font-size:13px;margin:9px 4px 17px}
+    .label{font-size:14px;color:#b9cae3;margin:16px 4px 7px}.field{width:100%;min-height:60px;border:1px solid #24466c;border-radius:16px;background:linear-gradient(110deg,#09182a,#071525);padding:10px 14px;display:flex;align-items:center;gap:13px;box-shadow:inset 0 0 14px #13345b20}.field select,.field input{background:transparent;border:0;outline:0;width:100%;font-size:15px;color:#f5f8ff}.field select option{background:#0b1930}.rank-mark{font-size:22px;color:#faad72;width:27px;text-align:center}
+    .price-card{margin-top:18px;padding:16px;border:1px solid #087ac2;border-radius:22px;background:radial-gradient(circle at 100% 100%,#063e66 0,transparent 27%),linear-gradient(145deg,#06172a,#071326);box-shadow:0 0 16px #008cff24;position:relative;overflow:hidden}.price-card:after{content:"";position:absolute;width:150px;height:2px;background:#00d8ff;right:-35px;bottom:31px;transform:rotate(-42deg);box-shadow:0 0 8px #00d8ff}.price-top{display:flex;align-items:center;justify-content:space-between;color:#c3d4ee;font-size:13px}.price-top span:first-child:before{content:"◉";color:var(--cyan);font-size:19px;margin-right:8px}.amount{font-size:34px;font-weight:800;letter-spacing:-1px;margin:10px 0 4px}.formula{color:var(--cyan);font-size:14px}.note{color:#adc0df;font-size:12px;line-height:1.55;margin:14px 0 0;max-width:95%}.cta{width:86%;margin:14px auto 4px;display:flex;align-items:center;justify-content:center;gap:10px;min-height:51px;border:1px solid #00eaff;border-radius:16px;background:linear-gradient(115deg,#00cfff,#0877ff 50%,#04cfff);box-shadow:0 0 18px #00baff6b,inset 0 0 12px #d5fcff5a;font-weight:800;font-size:16px}.cta:active,.quick button:active{transform:scale(.985)}
+    .bottom{position:fixed;z-index:5;bottom:calc(8px + var(--safe));left:50%;transform:translateX(-50%);width:min(92%,488px);height:60px;border:1px solid #16507a;border-radius:22px;background:#061326eF;backdrop-filter:blur(18px);display:grid;grid-template-columns:repeat(3,1fr);padding:4px;box-shadow:0 8px 28px #0009}.nav{border:0;background:transparent;color:#90a8cb;border-radius:17px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10px}.nav b{font-size:19px;font-weight:500}.nav.active{color:white;background:linear-gradient(120deg,#3422a2,#293ad1);box-shadow:inset 0 0 10px #727cff55}
+    .page-title{font-size:25px;margin:24px 4px 20px}.switcher{display:grid;grid-template-columns:1fr 1fr;border:1px solid #24466c;border-radius:17px;padding:4px;margin-bottom:17px}.switcher button{border:0;background:transparent;color:#a7bad8;border-radius:13px;height:44px;font-size:14px}.switcher button.active{background:linear-gradient(110deg,#00cfff,#0879ff);color:white;font-weight:700;box-shadow:0 0 12px #00aeff5a}.filters{display:flex;gap:8px;overflow:auto;padding-bottom:4px}.chip{white-space:nowrap;border:1px solid #274361;background:#0b1729;color:#9fb3d1;border-radius:18px;padding:9px 14px;font-size:12px}.chip.active{background:#2737c8;border-color:#387cff;color:#fff}.empty{text-align:center;color:#7186a7;margin:82px 0;font-size:15px}.txn{display:flex;align-items:center;gap:12px;padding:15px 4px;border-bottom:1px solid #203147}.txn-icon{width:38px;height:38px;border:1px solid #075c8c;color:var(--cyan);border-radius:50%;display:grid;place-items:center;font-size:20px}.txn small{display:block;color:#8299bb;margin-top:5px}.txn strong{margin-left:auto;color:var(--cyan);font-size:14px;white-space:nowrap}.txn.negative strong{color:#afc3e7}
+    .profile{border:1px solid #1c5681;border-radius:20px;padding:14px;background:linear-gradient(130deg,#07182b,#091b31);display:flex;align-items:center;gap:13px;margin:10px 0 20px}.avatar{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle,#03365a,#071020);border:2px solid #00bfff;color:#00d9ff;font-size:24px}.profile strong{font-size:16px}.profile small{display:block;color:#9eb2d0;margin-top:5px}.profile .id{margin-left:auto;color:#96acd0;font-size:12px}.balance-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:13px}.mini-balance{border:1px solid #17557b;background:#07182b;border-radius:14px;padding:12px;color:#a8bbd6;font-size:12px}.mini-balance strong{display:block;color:white;font-size:18px;margin-top:5px}.section-caption{font-size:11px;letter-spacing:3px;color:#8298b8;margin:24px 5px 9px}.setting-list{border:1px solid #17466d;border-radius:19px;overflow:hidden;background:linear-gradient(145deg,#09182a,#071424)}.setting{display:grid;grid-template-columns:42px 1fr auto;gap:11px;align-items:center;padding:13px 12px;border-bottom:1px solid #192d44;min-height:67px}.setting:last-child{border:0}.sicon{width:39px;height:39px;border-radius:12px;background:#0d2942;color:#13ceff;display:grid;place-items:center;font-size:18px}.setting strong{font-size:14px;font-weight:500}.setting small{display:block;color:#899fbe;font-size:11px;margin-top:4px}.arrow{color:#93a9c9;font-size:19px}.toggle{width:39px;height:23px;border-radius:20px;background:#324158;padding:3px;display:flex;justify-content:flex-start}.toggle i{height:17px;width:17px;background:white;border-radius:50%}.toggle.on{background:#087eff;justify-content:flex-end}
+    .overlay{position:fixed;inset:0;background:#020814c9;z-index:10;display:none;align-items:flex-end;justify-content:center}.overlay.open{display:flex}.sheet{width:min(100%,520px);padding:20px 18px calc(22px + var(--safe));border:1px solid #1f6a93;border-radius:24px 24px 0 0;background:linear-gradient(150deg,#0d2037,#06111f);box-shadow:0 -10px 32px #00152c}.sheet-head{display:flex;align-items:center;justify-content:space-between;font-size:19px;font-weight:700;margin-bottom:14px}.close{border:0;background:#14263e;color:#b8cce8;border-radius:50%;width:31px;height:31px;font-size:19px}.sheet p{color:#a6bddc;line-height:1.5;font-size:14px}.sheet input{width:100%;height:52px;background:#071525;border:1px solid #285176;border-radius:13px;padding:0 14px;outline:0;margin:8px 0}.sheet button.action{width:100%;height:49px;border:1px solid #00dfff;border-radius:14px;background:linear-gradient(110deg,#00cfff,#146eff);font-weight:700;margin-top:10px}.toast{position:fixed;z-index:20;left:50%;bottom:85px;transform:translate(-50%,10px);opacity:0;background:#122a43;border:1px solid #176995;border-radius:14px;padding:11px 16px;font-size:13px;transition:.2s;pointer-events:none}.toast.show{opacity:1;transform:translate(-50%,0)}
+    body.reduce-motion *{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+    @media(min-width:520px){.app{padding-left:20px;padding-right:20px}.hero{height:205px}.mode{height:91px}}
+  </style>
+  <link rel="stylesheet" href="app.css?v=20261115-shop">
+  <link rel="stylesheet" href="assets/p2p.css?v=20261118">
+  <link rel="stylesheet" href="assets/donat/shop.css?v=20261117">
+</head>
+<body>
+  <main class="app">
+    <header class="tg-head">
+      <button class="tg-icon left" type="button" aria-label="Orqaga" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <img class="brand-icon" src="assets/arslan-mark.jpeg" alt="" width="43" height="43">
+      <div class="brand-text"><strong>Arslan Boost</strong><small data-i18n="miniApp">mini-ilova</small></div>
+      <button class="tg-icon right" type="button" aria-label="Menyu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
+      </button>
+    </header>
+    <nav class="service-switch" aria-label="Xizmatlar" id="service-switch">
+      <button type="button" data-service="home" aria-controls="home" aria-pressed="false">
+        <span data-ui-icon="bolt"></span>Boost
+      </button>
+      <button type="button" data-service="donat" aria-controls="donat" aria-pressed="true">
+        <span data-ui-icon="shop"></span>Donat Shop
+      </button>
+    </nav>
+    <section class="page" id="services" aria-labelledby="service-title">
+      <div class="service-heading">
+        <img class="brand-icon service-logo" src="assets/arslan-mark.jpeg" alt="" width="58" height="58">
+        <h1 id="service-title" data-i18n="selectService">Xizmatni tanlang</h1>
+        <p data-i18n="selectServiceHint">Davom etish uchun bo‘limni tanlang</p>
+      </div>
+      <button type="button" class="service-card" data-service="home" aria-controls="home">
+        <span class="sicon" data-ui-icon="shield"></span><span><strong data-i18n="serviceBoost">Rank ko‘tarish</strong><small>Standoff 2</small></span><span aria-hidden="true">›</span>
+      </button>
+      <button type="button" class="service-card" data-service="donat" aria-controls="donat">
+        <span class="sicon" data-ui-icon="shop"></span><span><strong data-i18n="serviceDonat">Donat sotib olish</strong><small data-i18n="serviceDonatHint">O‘yin valyutalari va xizmatlar</small></span><span aria-hidden="true">›</span>
+      </button>
+      <button type="button" class="service-card service-help" data-sheet="support">
+        <span class="sicon" data-ui-icon="support"></span><span><strong data-i18n="support">Texnik yordam</strong><small data-i18n="helpDesc">Operator bilan bog‘lanish</small></span><span aria-hidden="true">›</span>
+      </button>
+    </section>
+    <section class="page" id="home">
+      <div class="hero" aria-label="Arslan Boost — Standoff 2 rank boost"></div>
+      <div class="quick">
+        <button data-sheet="balance"><span class="qicon" data-ui-icon="wallet"></span><span><span data-i18n="balance">Balans</span><strong id="quick-balance">0 so'm</strong></span><span class="plus" data-ui-icon="plus"></span></button>
+        <button data-sheet="promo"><span class="qicon" data-ui-icon="promo"></span><span data-i18n="promo">Promo kod</span><span>›</span></button>
+        <button data-sheet="support"><span class="qicon" data-ui-icon="support"></span><span data-i18n="support">Texnik yordam</span><span>›</span></button>
+      </div>
+      <h1><span data-i18n="chooseMode">Rejimni tanlang</span></h1>
+      <div class="mode-grid">
+        <button class="mode selected" data-mode="wing" aria-pressed="true">Напы</button><button class="mode" data-mode="comp" aria-pressed="false">Сорев</button><button class="mode" data-mode="duel" aria-pressed="false">Дуэль</button>
+      </div><div class="chosen" id="mode-label">Tanlangan rejim: Напы</div>
+      <div class="rank-fields">
+        <div>
+          <div class="label" data-i18n="currentRank">Hozirgi rankingiz</div>
+          <div class="field">
+            <span class="rank-mark" aria-hidden="true"></span>
+            <select id="from-rank" class="rank-native" aria-hidden="true" tabindex="-1"></select>
+            <button type="button" class="rank-select" id="from-rank-trigger" aria-haspopup="dialog"></button>
+            <span class="rank-chevron" aria-hidden="true"></span>
+          </div>
+        </div>
+        <div>
+          <div class="label" data-i18n="targetRank">Maqsad rank</div>
+          <div class="field">
+            <span class="rank-mark" aria-hidden="true"></span>
+            <select id="to-rank" class="rank-native" aria-hidden="true" tabindex="-1"></select>
+            <button type="button" class="rank-select" id="to-rank-trigger" aria-haspopup="dialog"></button>
+            <span class="rank-chevron" aria-hidden="true"></span>
+          </div>
+        </div>
+      </div>
+      <label class="label game-id-label" data-i18n="gameId" for="game-id">O‘yin ID yoki nick</label>
+      <div class="field"><input id="game-id" placeholder="Masalan, 12345678" maxlength="32" autocomplete="off" enterkeyhint="done"></div>
+      <article class="price-card"><div class="price-top"><span class="price-label"><span data-ui-icon="receipt"></span><span data-i18n="orderPrice">Buyurtma narxi</span></span><span id="steps">3 ta bosqich</span></div><div class="amount" id="amount">13 000 so‘m</div><div class="formula" id="formula">3 000 + 4 000 + 6 000 = 13 000 so‘m</div><div class="boost-minimum" id="boost-eta" hidden></div><div class="boost-minimum" id="boost-minimum">Eng kam buyurtma — 12 000 so‘m</div><p class="note" data-i18n="priceNote">To‘lov usulini buyurtma paytida tanlang.</p></article>
+      <button class="cta" id="order-btn" disabled aria-disabled="true"><span data-ui-icon="send"></span> <span data-i18n="order">Buyurtma berish</span></button>
+    </section>
+    <section class="page shop-page active" id="donat" aria-labelledby="shop-title">
+      <header class="shop-titlebar">
+        <img class="gold-mark" src="assets/donat/catalog/shop-mark.webp" alt="" width="156" height="126">
+        <div><h1 id="shop-title">Donat <em>Shop</em></h1><p data-shop-text="sub">O‘yin valyutalari va xizmatlar</p></div>
+      </header>
+      <div class="searchbox" role="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></svg>
+        <input type="search" id="shop-search" placeholder="Qidirish…" aria-label="Qidirish" autocomplete="off" enterkeyhint="done">
+        <button type="button" id="clear-search" hidden aria-label="Tozalash">×</button>
+      </div>
+      <div class="shop-banner">
+        <img src="assets/donat/catalog/universal-shop.webp" alt="UNIVERSAL SHOP · ARSLAN SHOP" width="1086" height="273" decoding="async">
+      </div>
+      <div class="category-tabs" role="group" id="shop-filters" aria-label="Do‘kon filtrlari">
+        <button type="button" data-category="all" aria-pressed="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span data-shop-text="all">Hammasi</span>
+        </button>
+        <button type="button" data-category="games" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 7h9c2.8 0 4.4 2 5.1 5.7l.4 2.5c.4 2.2-1.7 3.5-3.1 2.3L16 15H8l-2.9 2.5c-1.4 1.2-3.5-.1-3.1-2.3l.4-2.5C3.1 9 4.7 7 7.5 7Z"/><path d="M8 9.5v5m-2.5-2.5h5m5.5-.5h.01m2 2h.01"/></svg>
+          <span data-shop-text="games">O‘yinlar</span>
+        </button>
+        <button type="button" data-category="services" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5m-18 4 9 5 9-5"/></svg>
+          <span data-shop-text="services">Servislar</span>
+        </button>
+      </div>
+      <div id="shop-content" aria-live="polite"></div>
+      <button class="support-card" type="button" data-sheet="support">
+        <span class="support-icon" data-ui-icon="support"></span>
+        <span><strong data-i18n="support">Texnik yordam</strong><small data-i18n="supportDesc">Buyurtma va to‘lov bo‘yicha yordam</small></span>
+        <span class="arrow" aria-hidden="true">›</span>
+      </button>
+    </section>
+    <section class="page" id="history"><h1 class="page-title"><span data-i18n="history">Tarix</span></h1><div class="switcher"><button class="active" data-history="orders"><span data-i18n="orders">Buyurtmalar</span></button><button data-history="payments"><span data-i18n="payments">To‘lovlar</span></button></div><div class="filters" id="filters"><button class="chip active"><span data-i18n="all">Barchasi</span></button><button class="chip"><span data-i18n="completed">Bajarildi</span></button><button class="chip"><span data-i18n="pending">Kutilmoqda</span></button><button class="chip"><span data-i18n="cancelled">Bekor qilingan</span></button></div><div id="history-content"><div class="empty"><span data-i18n="emptyHistory">Tranzaksiyalar yo‘q</span></div></div></section>
+    <section class="page" id="settings"><div class="profile"><div class="avatar">A</div><div><strong id="username">Arslan Boost</strong><small id="telegram-id"><span data-i18n="appUser">Mini App foydalanuvchisi</span></small></div><span class="id">ID</span></div><div class="balance-row"><button type="button" class="mini-balance" id="setting-balance-card" aria-label="Balansni to‘ldirish"><span data-i18n="balanceCaption">BALANS</span><strong id="setting-balance">0 so'm</strong></button><div class="mini-balance"><span data-i18n="cashback">KESHBEK</span><strong style="color:#00d8ff">0</strong></div></div><h1 class="page-title"><span data-i18n="settings">Sozlamalar</span></h1><div class="section-caption"><span data-i18n="language">TIL</span></div><div class="switcher"><button class="active" data-lang="uz">O‘zbekcha</button><button data-lang="ru">Русский</button></div><div class="section-caption"><span data-i18n="settingsCaption">SOZLAMALAR</span></div><div class="setting-list">
+        <div class="setting" data-sheet="profile"><span class="sicon" data-ui-icon="user"></span><div><strong><span data-i18n="profile">Profil ma'lumotlari</span></strong><small><span data-i18n="profileDesc">Profilingiz va shaxsiy ma'lumotlar</span></small></div><span class="arrow">›</span></div>
+        <div class="setting" data-nav="history"><span class="sicon" data-ui-icon="history"></span><div><strong><span data-i18n="orderHistory">Buyurtmalar tarixi</span></strong><small><span data-i18n="historyDesc">Barcha buyurtmalar va ularning holati</span></small></div><span class="arrow">›</span></div>
+        <div class="setting" data-sheet="promo"><span class="sicon" data-ui-icon="promo"></span><div><strong><span data-i18n="promoCodes">Promo kodlar</span></strong><small><span data-i18n="promoDesc">Promo kodni faollashtirish va bonuslar</span></small></div><span class="arrow">›</span></div>
+        <div class="setting" data-sheet="support"><span class="sicon" data-ui-icon="support"></span><div><strong><span data-i18n="support">Qo'llab-quvvatlash</span></strong><small><span data-i18n="supportDesc">Savollar bo‘yicha 24/7 yordam</span></small></div><span class="arrow">›</span></div>
+        <div class="setting" id="motion-row"><span class="sicon" data-ui-icon="bolt"></span><div><strong><span data-i18n="animations">Animatsiyalar</span></strong><small><span data-i18n="motionDesc">Ilova animatsiyalarini kamaytirish</span></small></div><span class="toggle" id="motion-toggle"><i></i></span></div>
+        <div class="setting" data-sheet="security"><span class="sicon" data-ui-icon="shield"></span><div><strong><span data-i18n="security">Xavfsizlik</span></strong><small><span data-i18n="securityDesc">Akkaunt parolini botga yubormang</span></small></div><span class="arrow">›</span></div>
+        <div class="setting" data-sheet="about"><span class="sicon" data-ui-icon="info"></span><div><strong><span data-i18n="about">Ilova haqida</span></strong><small><span data-i18n="aboutDesc">Arslan Boost · Standoff 2 rank boost</span></small></div><span class="arrow">›</span></div>
+      </div></section>
+  </main>
+  <nav class="bottom" id="bottom-nav" aria-label="Asosiy menyu">
+    <button type="button" class="nav active" data-page="home" aria-current="page"><b data-ui-icon="home"></b><span data-i18n="home">Bosh sahifa</span></button>
+    <button type="button" class="nav" data-page="history"><b data-ui-icon="history"></b><span data-i18n="history">Tarix</span></button>
+    <button type="button" class="nav" data-page="settings"><b data-ui-icon="settings"></b><span data-i18n="settings">Sozlamalar</span></button>
+    <button type="button" class="nav" data-partners><b data-ui-icon="partners"></b><span data-shop-text="partners">Hamkorlar</span></button>
+  </nav>
+  <div class="overlay" id="overlay"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1"><div class="sheet-head"><span id="sheet-title"></span><button type="button" class="close" id="close-sheet" aria-label="Yopish">×</button></div><div id="sheet-body"></div></div></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <button type="button" id="keyboard-done" class="keyboard-done" data-i18n="keyboardDone" tabindex="-1" hidden>Tayyor</button>
+  <div class="intro" id="intro" aria-hidden="true"><div class="intro-content"><img class="intro-emblem" src="assets/intro-emblem.webp" width="1280" height="1280" alt="" decoding="async" fetchpriority="high"><div class="intro-brand">ARSLAN BOOST</div><div class="intro-game">STANDOFF <span>2</span></div><p class="intro-subtitle" data-i18n="introSubtitle">Rank oshirish xizmati</p></div></div>
+  <script src="assets/donat/shop.js?v=20261117"></script>
+  <script src="assets/p2p.js?v=20261118"></script>
+  <script src="app.js?v=20261117"></script>
+</body></html>
