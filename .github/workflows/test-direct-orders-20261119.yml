@@ -1,4 +1,4 @@
-name: Verify direct checkout payments after retiring legacy wallet tests
+name: Verify final direct DONAT Stars and card checkout without wallet
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
