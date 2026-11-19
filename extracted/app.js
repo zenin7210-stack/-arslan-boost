@@ -490,8 +490,6 @@
   function showOrderHistory() {
     state.historyTab = 'orders';
     state.filter = 'all';
-    all('[data-history]').forEach(button => button.classList.toggle('active', button.dataset.history === 'orders'));
-    all('#filters .chip').forEach((button, index) => button.classList.toggle('active', index === 0));
     nav('history');
     renderHistory();
   }
@@ -969,6 +967,14 @@
   }
   all('.mode').forEach(button => button.onclick = () => selectMode(button.dataset.mode));
   $('#history-content').addEventListener('click', event => {
+    const action=event.target.closest('[data-history-action]');
+    if (action) {
+      if (action.dataset.historyAction==='new-order') nav('home',true);
+      else if (action.dataset.historyAction==='new-topup') openTopup(() => nav('history'));
+      else if (action.dataset.historyAction==='clear-filter') {state.filter='all';renderHistory();}
+      else if (action.dataset.historyAction==='refresh') syncState();
+      return;
+    }
     const button = event.target.closest('[data-history-kind]');
     if (button) openHistoryEntry(button.dataset.historyKind, button.dataset.historyId);
   });
@@ -1004,8 +1010,22 @@
     }
   });
   all('[data-lang]').forEach(button=>button.onclick=()=>{state.lang=button.dataset.lang;storage.set('ab-lang',state.lang);applyLanguage();if(state.service&&tg?.initData)api('profile',{lang:state.lang}).catch(()=>{});});
-  all('[data-history]').forEach(button=>button.onclick=()=>{state.historyTab=button.dataset.history;all('[data-history]').forEach(b=>b.classList.toggle('active',b===button));renderHistory();syncState();});
-  all('#filters .chip').forEach((button,i)=>{button.onclick=()=>{state.filter=['all','completed','pending','cancelled'][i];all('#filters .chip').forEach(b=>b.classList.toggle('active',b===button));renderHistory();};});
+  all('[data-history]').forEach(button=>button.onclick=()=>{
+    if(state.historyTab!==button.dataset.history)state.filter='all';
+    state.historyTab=button.dataset.history;
+    renderHistory();
+    syncState();
+  });
+  all('#filters [data-history-filter]').forEach(button=>button.onclick=()=>{
+    state.filter=button.dataset.historyFilter;
+    renderHistory();
+  });
+  $('#history-refresh').onclick=async event=>{
+    const button=event.currentTarget;
+    if(button.disabled)return;
+    button.disabled=true;
+    try{await syncState();}finally{button.disabled=false;}
+  };
   function setMotion(reduced){document.body.classList.toggle('reduce-motion',reduced);$('#motion-toggle').classList.toggle('on',reduced);storage.set('ab-reduced-motion',String(reduced));}
   $('#setting-balance-card')?.addEventListener('click',()=>openInfo('balance'));$('#motion-row').onclick=()=>setMotion(!document.body.classList.contains('reduce-motion'));if(storage.get('ab-reduced-motion')==='true')setMotion(true);
   const user=tg?.initDataUnsafe?.user;if(user){$('#username').textContent=[user.first_name,user.last_name].filter(Boolean).join(' ')||t('appUser');$('#telegram-id').textContent=user.username?'@'+user.username:'ID: '+user.id;const avatar=$('.avatar'),initial=(user.first_name||'A').slice(0,1);avatar.textContent=initial;if(user.photo_url){try{const photo=new URL(user.photo_url);if(photo.protocol==='https:'){const img=new Image();img.alt='';img.width=54;img.height=54;img.decoding='async';img.referrerPolicy='no-referrer';img.onload=()=>avatar.replaceChildren(img);img.onerror=()=>{avatar.textContent=initial;};img.src=photo.href;}}catch{}}}
