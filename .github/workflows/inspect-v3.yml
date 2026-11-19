@@ -10,28 +10,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect checksum-locked v3 ZIP and extract source to staging only
+      - name: Verify v3 and extract code to staging only
         shell: bash
         run: |
           set -euo pipefail
           ZIP='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
           printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
           unzip -t "$ZIP" >/dev/null
-          mkdir -p /tmp/boost_v3_source
+          mkdir -p /tmp/boost_v3_source/migrations
           unzip -p "$ZIP" 'arslan-boost-cloudflare/public/app.js' > /tmp/boost_v3_source/app.js
           unzip -p "$ZIP" 'arslan-boost-cloudflare/src/worker.mjs' > /tmp/boost_v3_source/worker.mjs
           unzip -p "$ZIP" 'arslan-boost-cloudflare/src/store.mjs' > /tmp/boost_v3_source/store.mjs
           unzip -p "$ZIP" 'arslan-boost-cloudflare/src/catalog.mjs' > /tmp/boost_v3_source/catalog.mjs
           unzip -p "$ZIP" 'arslan-boost-cloudflare/tests/payment.test.mjs' > /tmp/boost_v3_source/payment.test.mjs || true
           unzip -p "$ZIP" 'arslan-boost-cloudflare/public/assets/p2p.js' > /tmp/boost_v3_source/p2p.js
-          unzip -p "$ZIP" 'arslan-boost-cloudflare/tests/approved-ui.test.mjs' > /tmp/boost_v3_source/approved-ui.test.mjs || true
-          unzip -Z1 "$ZIP" | grep -E '^arslan-boost-cloudflare/(src/|public/|tests/)' | sed -n '1,120p' > /tmp/boost_v3_source/files.txt
-          mkdir -p /tmp/boost_v3_source/migrations
-          for f in $(unzip -Z1 "$ZIP" | grep '^arslan-boost-cloudflare/migrations/.*\.sql
+          unzip -p "$ZIP" 'arslan-boost-cloudflare/tests/approved-ui.test.mjs' > /tmp/boost_v3_source/approved-ui.test.mjs
+          unzip -Z1 "$ZIP" | grep -E '^arslan-boost-cloudflare/(src/|public/|tests/)' | sed -n '1,140p' > /tmp/boost_v3_source/files.txt
+          while IFS= read -r f; do
+            unzip -p "$ZIP" "$f" > "/tmp/boost_v3_source/migrations/$(basename "$f")"
+          done < <(unzip -Z1 "$ZIP" | grep -E '^arslan-boost-cloudflare/migrations/.*[.]sql$')
+          test -s /tmp/boost_v3_source/app.js
           test -s /tmp/boost_v3_source/worker.mjs
           node --check /tmp/boost_v3_source/app.js
           node --check /tmp/boost_v3_source/worker.mjs
-      - name: Publish inspectable source to dedicated staging branch (never production)
+      - name: Publish inspectable source to dedicated staging branch
         shell: bash
         run: |
           set -euo pipefail
@@ -44,27 +46,5 @@ jobs:
           mkdir -p extracted
           cp -R /tmp/boost_v3_source/. extracted/
           git add extracted
-          git commit -m "Extract non-secret v3 checkout sources for approved Stars fix"
-          git push --force origin HEAD:refs/heads/staging-boost-v3-source-20261119
-); do
-            unzip -p "$ZIP" "$f" > "/tmp/boost_v3_source/migrations/${f##*/}"
-          done
-          test -s /tmp/boost_v3_source/app.js
-          test -s /tmp/boost_v3_source/worker.mjs
-          node --check /tmp/boost_v3_source/app.js
-          node --check /tmp/boost_v3_source/worker.mjs
-      - name: Publish inspectable source to dedicated staging branch (never production)
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan staging-boost-v3-source-20261119
-          git rm -rf --quiet . || true
-          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          mkdir -p extracted
-          cp /tmp/boost_v3_source/* extracted/
-          git add extracted
-          git commit -m "Extract non-secret v3 checkout sources for approved Stars fix"
+          git commit -m "Extract approved v3 checkout sources for Stars fix"
           git push --force origin HEAD:refs/heads/staging-boost-v3-source-20261119
