@@ -9,6 +9,8 @@
       expires: 'Время для перевода', rules1: 'Не меняйте сумму ни на 1 сум.',
       rules2: 'Оплатите в течение 10 минут.', transfer: 'Я оплатил', checking: 'Проверяем платёж',
       checkingNote: 'Администратор проверяет фактическое поступление на карту.',
+      checkingAuto: 'Ожидаем подтверждение поступления от банковского источника. Повторно не переводите.',
+      waitingAuto: 'Ожидаем банковское подтверждение. Если деньги уже отправлены, не платите повторно.',
       manualReview: 'Ожидает подтверждения администратора',
       manualWait: 'После проверки вы получите уведомление в Telegram. Чек не обязателен.',
       paid: 'Баланс пополнен', orderPaid: 'Заказ оплачен', order: 'Заказ', toOrders: 'К заказам',
@@ -36,6 +38,8 @@
       expires: 'O‘tkazma uchun vaqt', rules1: 'Summani 1 so‘mga ham o‘zgartirmang.',
       rules2: '10 daqiqa ichida to‘lang.', transfer: 'To‘ladim', checking: 'To‘lov tekshirilmoqda',
       checkingNote: 'Administrator kartaga pul tushganini tekshiradi.',
+      checkingAuto: 'Bank xabari orqali tushum tasdig‘ini kutyapmiz. Pulni qayta yubormang.',
+      waitingAuto: 'Bank tasdig‘i kutilmoqda. Pul jo‘natgan bo‘lsangiz, qayta to‘lamang.',
       manualReview: 'Administrator tasdig‘i kutilmoqda',
       manualWait: 'Tekshiruvdan keyin Telegram orqali xabar olasiz. Chek majburiy emas.',
       paid: 'Balans to‘ldirildi', orderPaid: 'Buyurtma to‘landi', order: 'Buyurtma', toOrders: 'Buyurtmalarga qaytish',
@@ -246,6 +250,34 @@
       };
       tick = setInterval(refreshClock, 500);
       refreshClock();
+      // Do not require the buyer to press "Paid" for the verified bank event
+      // to appear. This endpoint is read-only; it never marks an invoice paid.
+      const queueInvoicePoll = () => {
+        if (!active(version) || !within('#p2p-clock')) return;
+        clearTimeout(polling);
+        polling = setTimeout(async () => {
+          if (!active(version) || refreshing === version) return;
+          refreshing = version;
+          try {
+            if (document.visibilityState !== 'hidden') {
+              const current = await ui.api(`invoice/${invoice.id}/status`, null, 'GET');
+              if (!active(version)) return;
+              invoice = current;
+              if (current.status !== 'pending' || current.checkedAt) {
+                deadline = 0;
+                renderCheck();
+                return;
+              }
+            }
+          } catch {
+            // A temporary network failure must not claim payment success.
+          } finally {
+            if (refreshing === version) refreshing = undefined;
+            if (active(version)) queueInvoicePoll();
+          }
+        }, 5000);
+      };
+      queueInvoicePoll();
     }
 
     function renderCancel() {
@@ -312,8 +344,8 @@
       const reference = order && invoice.orderId
         ? t('order') + ' #' + invoice.orderId : '#' + invoice.id;
       const detail = paid && !order ? money(invoice.balance ?? options?.balance ?? 0)
-        : manual ? t('manualWait') : running ? t('checkingNote')
-          : invoice.status === 'pending' ? t('waiting') : reference;
+        : manual ? t('manualWait') : running ? t(invoice.verificationMode === 'automatic' ? 'checkingAuto' : 'checkingNote')
+          : invoice.status === 'pending' ? t(invoice.verificationMode === 'automatic' ? 'waitingAuto' : 'waiting') : reference;
       const backLabel = order ? (paid ? 'toOrders' : 'back')
         : ['pending', 'manual_check'].includes(invoice.status) ? 'back' : 'new';
       const version = show(`
