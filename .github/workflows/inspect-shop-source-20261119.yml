@@ -1,0 +1,36 @@
+name: Inspect locked DONAT Shop payment UI sources
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/inspect-shop-source-20261119.yml]
+permissions: { contents: write }
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main}
+      - name: Extract approved DONAT checkout source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP=ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip
+          printf '%s  %s\n' 'd5bf258cabdd2f8def1f701292bc6f7d01233463a60ce72b4b8ef45642f49828' "$ZIP" | sha256sum -c -
+          mkdir -p /tmp/arslan-shop
+          unzip -p "$ZIP" arslan-boost-cloudflare/public/assets/donat/shop.js > /tmp/arslan-shop/shop.js
+          unzip -p "$ZIP" arslan-boost-cloudflare/public/assets/donat/shop.css > /tmp/arslan-shop/shop.css
+          test -s /tmp/arslan-shop/shop.js
+      - name: Publish isolated UI inspection source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions-bot
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git checkout --orphan staging-donat-checkout-20261119
+          git rm -rf --quiet . || true
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          mkdir src
+          cp /tmp/arslan-shop/* src/
+          git add src
+          git commit -m "Inspect locked DONAT checkout source"
+          git push --force origin HEAD:refs/heads/staging-donat-checkout-20261119
