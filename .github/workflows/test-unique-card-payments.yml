@@ -1,4 +1,4 @@
-name: Validate owner invoice recovery, safe cancellation and card-only routing
+name: Test precise P2P failure codes without financial writes
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -77,6 +77,8 @@ jobs:
           assert.ok(p2p.includes("ui.api('invoice/recover', {})"));
           assert.ok(backend.includes('path === "invoice/recover"'));
           assert.ok(fs.readFileSync('src/worker.mjs','utf8').includes('Card invoices must not depend on Stars'));
+          assert.ok(fs.readFileSync('src/worker.mjs','utf8').includes('p2p_handler_'));
+          assert.ok(fs.readFileSync('src/worker.mjs','utf8').includes('p2p_auth_internal'));
           assert.ok(backend.includes('const active = current;'));
           assert.ok(p2p.includes('showLoading(() => open(preferredMethod))'));
           assert.ok(backend.includes('p2p_options_'));
