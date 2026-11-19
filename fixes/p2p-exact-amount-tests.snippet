@@ -72,7 +72,7 @@ test('stale checked card transfer is recoverable; active new one uses another ex
   const before=await sys.api(1,'invoice/'+next.data.id+'/status',null,'GET');
   assert.equal(before.data.balance,0);
   const delayed={sender:'BankDemo',eventId:'old-bank-after-expiry',text:notification(10000,'BANK-OLD-AFTER-EXPIRY',
-    new Date((first.data.createdAt+100) * 1000).toISOString())};
+    new Date((first.data.createdAt-1800) * 1000).toISOString())};
   const result=await sys.relay(delayed);
   assert.equal(result.data.matched,true);
   await sys.drain();
