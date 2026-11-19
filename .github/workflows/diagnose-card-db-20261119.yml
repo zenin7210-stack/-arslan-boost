@@ -1,4 +1,4 @@
-name: Diagnose live card checkout database safely (read only)
+name: Trace read-only Cloudflare D1 query failure for card checkout
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT 'invoice_pending_all' AS metric, COUNT(*) AS total FROM invoices WHERE status='pending' UNION ALL SELECT 'pending_recent_1h',COUNT(*) FROM invoices WHERE status='pending' AND created_at>strftime('%s','now')-3600 UNION ALL SELECT 'invoice_recent_1h',COUNT(*) FROM invoices WHERE created_at>strftime('%s','now')-3600 UNION ALL SELECT 'orders_pending_all',COUNT(*) FROM donat_orders WHERE status='pending' UNION ALL SELECT 'orders_recent_1h',COUNT(*) FROM donat_orders WHERE created_at>strftime('%s','now')-3600 UNION ALL SELECT 'orders_paid_all',COUNT(*) FROM donat_orders WHERE status='paid' UNION ALL SELECT 'boost_pending_all',COUNT(*) FROM orders WHERE status='pending' UNION ALL SELECT 'bank_pending_review',COUNT(*) FROM invoices WHERE status='pending' AND checked_at IS NOT NULL UNION ALL SELECT 'expired_pending_invoice',COUNT(*) FROM invoices WHERE status='pending' AND expires_at<strftime('%s','now')" > /tmp/live-metrics.json
+            --command "SELECT COUNT(*) AS pending_invoices FROM invoices WHERE status='pending'" > /tmp/live-metrics.json || { cat /tmp/live-metrics.json; exit 1; }
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
             --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 2" > /tmp/live-migration.json
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
