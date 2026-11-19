@@ -1,4 +1,4 @@
-name: Verify final three-method direct checkout with strict wallet cutoff
+name: Verify Stars by service, card amount bump, iOS keyboard and hidden balance
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
