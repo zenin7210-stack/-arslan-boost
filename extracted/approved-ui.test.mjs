@@ -7,7 +7,7 @@ const shop=readFileSync(new URL('../public/assets/donat/shop.js',import.meta.url
 const css=readFileSync(new URL('../public/app.css',import.meta.url),'utf8');
 const catalog=JSON.parse(readFileSync(new URL('../public/assets/donat/catalog.json',import.meta.url),'utf8'));
 test('wallet offers three distinct selectable payment modes',()=>{
-  assert.match(app,/\['uzcard','humo',forOrder\?'balance':'stars'\]/);
+  assert.match(app,/\['uzcard','humo','stars'\]/);
   assert.match(app,/data-payment-choice/);
   assert.match(app,/cardExact/);
   assert.match(app,/data-card-amount/);
@@ -20,9 +20,11 @@ test('card top-up creates an actual server invoice, never credits locally',()=>{
   assert.match(p2p,/ui\.api\(`invoice\/\$\{invoice\.id\}\/status`/);
   assert.doesNotMatch(p2p,/options\.balance\s*\+=/);
 });
-test('boost checkout uses the same card invoice flow or debits server balance',()=>{
+test('boost checkout uses the same card invoice flow and genuine Telegram Stars',()=>{
   assert.match(app,/requestTransfer\('checkout'/);
-  assert.match(app,/paymentMethod:'balance'/);
+  assert.match(app,/paymentMethod:'stars',acceptTerms:true/);
+  assert.match(app,/showStarsPayment\(\{kind:'order'/);
+  assert.doesNotMatch(app,/paymentMethodTiles\([^\n]+forOrder\?'balance':'stars'/);
   assert.match(app,/paymentMethodTiles\(c\.method, true\)/);
 });
 test('enhanced product panels preserve dynamic catalog pricing',()=>{
