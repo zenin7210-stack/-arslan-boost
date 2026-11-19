@@ -1,0 +1,155 @@
+name: ARSLAN BOOST — exact prices and 20min reservation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/deploy-price20.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+
+jobs:
+  build-verify-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Fetch immutable production baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: arslan-direct-order-tested
+          run-id: 44595628857
+          repository: zenin7210-stack/-arslan-boost
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+      - name: Enforce frozen Worker/DB baseline, apply original UI fix and price patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            '8ef30201f0b9a60fe8ed1f5abef4aa89868d3d60dc279108f28dd058097628ef' release/src/worker.mjs \
+            'b32c780233bad0af22fac1c5f6b7d7d14be8451e790840d89db627cacd97d030' release/src/p2p.mjs \
+            'e28c3a1e36ad831ddbf15fc311278de641f03b511e21cf963f50f3dddb38e5e7' release/public/app.js \
+            'db6b5524bc28bbb5258e59ca8a292ad2555e2fdb4dd5a5ffb600ddafd3d15a97' release/public/assets/p2p.js \
+            '5ebc005abf37d75e172866a2d233cdc9ffbe41d9d145abc2b80f6dfffdd3fc4d' release/public/index.html \
+            '5abec56a8932e47a849b4b81e9fb3157a4c4a6d6224174e75371f9477cc707f0' release/wrangler.production.jsonc | sha256sum -c -
+          base64 --decode fixes/pro-ui-payment-20261120.py.b64 > /tmp/pro-ui.py
+          printf '%s  %s\n' '8828d6eef1660de86881a2c0c64a4412e31e272a5cdb37598ed6c0cf8295e0d5' /tmp/pro-ui.py | sha256sum -c -
+          python3 /tmp/pro-ui.py
+          printf '%s  %s\n' '0c01e02b89bb2f1d58d8b2d1c3cf673a796301f25161b2c304c6427461c10685' release/public/assets/p2p.js | sha256sum -c -
+          python3 fixes/apply-price20.py release
+          python3 fixes/test-price20.py release
+          node - <<'JS'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('release/wrangler.production.jsonc','utf8'));
+          if(c.name!=='arslan-boost-bot'||c.d1_databases?.[0]?.database_name!=='arslan-boost-payments'||
+             c.keep_vars!==true||Object.hasOwn(c.vars||{},'P2P_MODE'))throw Error('Unsafe production target');
+          const s=fs.readFileSync('release/src/p2p.mjs','utf8');
+          const ui=fs.readFileSync('release/public/assets/p2p.js','utf8');
+          if(!s.includes('const TRANSFER_STEPS = [0];') ||
+             !s.includes('const HOLD_SECONDS = 20 * 60;') ||
+             !s.includes('REUSE_REVIEW_SECONDS') ||
+             ui.includes('Ближайшую свободную') ||
+             !fs.readFileSync('release/public/index.html','utf8').includes('20261120-exact20min'))
+            throw Error('Expected fixed-price safety changes not found');
+          JS
+      - name: Test every JS file and run full regression suite
+        working-directory: release
+        run: |
+          set -euo pipefail
+          find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          npm test
+          echo 'Tests executed, skipped tests are not treated as passing'
+      - name: Verify existing live assets before production mutation
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          for path in assets/p2p.js app.js index.html; do
+            curl -fsSL --retry 2 --max-time 25 "$URL/$path" -o "/tmp/live-$(basename "$path")"
+          done
+          node - <<'JS'
+          const fs=require('node:fs'),cr=require('node:crypto');
+          const sha=p=>cr.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+          const current=sha('/tmp/live-p2p.js');
+          const valid=['0c01e02b89bb2f1d58d8b2d1c3cf673a796301f25161b2c304c6427461c10685',
+            sha('release/public/assets/p2p.js')];
+          if(!valid.includes(current))throw Error('Live payment UI changed unexpectedly');
+          const currentApp=sha('/tmp/live-app.js');
+          if(!['e28c3a1e36ad831ddbf15fc311278de641f03b511e21cf963f50f3dddb38e5e7',
+                sha('release/public/app.js')].includes(currentApp)) throw Error('Live application source changed unexpectedly');
+          const html=fs.readFileSync('/tmp/live-index.html','utf8');
+          if(!html.includes('20261120-pro-ui1') && !html.includes('20261120-exact20min'))
+            throw Error('Unexpected production index');
+          console.log('Safe baseline verified');
+          JS
+      - name: Check private P2P configuration and D1 payment safeguards (read-only)
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/bindings.json
+          node - <<'JS'
+          const j=require('/tmp/bindings.json');
+          if(!j.success)throw Error('Cannot inspect current payment settings');
+          const bindings=j.result?.bindings||[];
+          if(!bindings.some(x=>x.name==='P2P_MODE'&&x.type==='plain_text'&&x.text==='private'))
+            throw Error('Bank verification mode changed, refusing to deploy');
+          for(const key of ['ADMIN_ID','P2P_CARDS','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'])
+            if(!bindings.some(x=>x.name===key))throw Error('Missing binding '+key);
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > /tmp/migrations.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM sqlite_master WHERE name IN ('p2p_unique_pending','p2p_one_open_invoice','p2p_one_invoice_per_order','p2p_paid_requires_bank_event','p2p_settle_on_paid')" > /tmp/safety.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const rows=f=>(j=>Array.isArray(j)?j.flatMap(x=>x.results||[]):j.results||[])(JSON.parse(fs.readFileSync(f)));
+          if(rows('/tmp/migrations.json')[0]?.name!=='0014_multiple_orders.sql')
+            throw Error('Unexpected D1 migration state');
+          const objects=new Set(rows('/tmp/safety.json').map(x=>x.name));
+          for(const name of ['p2p_unique_pending','p2p_one_open_invoice','p2p_one_invoice_per_order',
+            'p2p_paid_requires_bank_event','p2p_settle_on_paid'])
+              if(!objects.has(name))throw Error('Missing D1 payment safety '+name);
+          console.log('D1 schema and protection verified; no migrations required');
+          JS
+      - name: Deploy unchanged payment secrets and balances, modified Worker/UI only
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo 'Deployed fixed-price checkout with no D1 migration'
+      - name: Smoke test live files and backend after CDN propagation
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          expected="$(sha256sum release/public/assets/p2p.js | cut -d' ' -f1)"
+          applied=0
+          for attempt in {1..12}; do
+            if curl -fsSL --max-time 25 "$URL/assets/p2p.js?v=20261120-exact20min" > /tmp/published-p2p.js; then
+              actual="$(sha256sum /tmp/published-p2p.js | cut -d' ' -f1)"
+              if [ "$actual" = "$expected" ]; then applied=1; break; fi
+            fi
+            sleep 3
+          done
+          test "$applied" = '1' || { echo '::error::Expected payment UI not yet published'; exit 1; }
+          curl -fsSL --max-time 25 "$URL/healthz" > /tmp/health.json
+          node - <<'JS'
+          const j=require('/tmp/health.json');
+          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production health check failed');
+          console.log('Live exact-price UI and backend respond successfully; no test payment was created');
+          JS
