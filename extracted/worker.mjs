@@ -690,6 +690,11 @@ export default {
         notifyTransfer(env, ctx, store, event);
         return json({ accepted: true, matched: event.matched, duplicate: event.duplicate });
       }
+      if (path.startsWith("/api/invoice/") || path === "/api/invoice") {
+        // Card invoices must not depend on Stars payment settings or any
+        // unrelated checkout lookups. Authenticate and validate via handleApi.
+        return await handleApi(request, env, ctx, store, config, path.slice(5));
+      }
       if (path.startsWith("/api/")) {
         return await handleApi(request, env, ctx, store, await checkoutSettings(store, config), path.slice(5));
       }
