@@ -683,6 +683,46 @@ export default {
     const store = new Store(env.DB);
     const config = settings(env, url);
     try {
+      if (path === "/_internal/diagnose-invoice" && request.method === "POST") {
+        const token = request.headers.get("X-Arslan-Diagnostic");
+        if (!validSecret(env.ARSLAN_DIAG_TOKEN) || !matchesSecret(token, env.ARSLAN_DIAG_TOKEN))
+          return json({ error:"endpoint_missing" },404);
+        // This read-only probe never changes an invoice or calls Telegram.
+        // Its response contains only sanitized categories, never IDs, card
+        // numbers, account balances, raw DB errors or tokens.
+        let stage="prepare";
+        try {
+          const id=telegramId(env.ADMIN_ID);
+          if (!id) throw new RequestError("diagnostic_admin_missing",503);
+          const userJson=JSON.stringify({id});
+          const timestamp=String(Math.floor(Date.now()/1000));
+          const message="auth_date="+timestamp+"\nuser="+userJson;
+          const alg={name:"HMAC",hash:"SHA-256"};
+          const enc=new TextEncoder();
+          const salt=await crypto.subtle.importKey("raw",enc.encode("WebAppData"),alg,false,["sign"]);
+          const derived=await crypto.subtle.sign("HMAC",salt,enc.encode(botToken(env)));
+          const key=await crypto.subtle.importKey("raw",derived,alg,false,["sign"]);
+          const hashBytes=await crypto.subtle.sign("HMAC",key,enc.encode(message));
+          const hash=[...new Uint8Array(hashBytes)].map(b=>b.toString(16).padStart(2,"0")).join("");
+          const init=new URLSearchParams({auth_date:timestamp,user:userJson,hash}).toString();
+          const probe=new Request(new URL("/api/invoice/options",request.url),{
+            method:"POST",headers:{"Content-Type":"application/json","X-Telegram-Init-Data":init},body:"{}"});
+          stage="authenticate";
+          const actor=await authenticate(probe,env);
+          stage="options";
+          const result=await p2pApi(probe,env,store,actor,{},"invoice/options");
+          stage="response";
+          return json({ok:true,stage,methodsConfigured:Array.isArray(result.methods)?result.methods.length:0,
+            hasActive:Boolean(result.active),hasLatest:Boolean(result.latest)});
+        } catch(error) {
+          const validCode=error instanceof RequestError && /^[a-z0-9_]{1,80}$/.test(error.message)
+            ? error.message : null;
+          const type=["TypeError","RangeError","ReferenceError","SyntaxError"].includes(error?.name)
+            ? error.name : error?.name==="D1_ERROR"?"D1_ERROR":"other";
+          return json({ok:false,stage,errorCode:validCode||"unexpected",
+            errorType:type},503);
+        }
+      }
       if (/^\/relay\/(humo|uzcard|cardxabar)$/.test(path)) {
         const method = path.slice("/relay/".length);
         authorizeRelay(request, env, method);
