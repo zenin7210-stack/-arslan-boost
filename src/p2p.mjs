@@ -260,6 +260,9 @@ export async function createP2pOrder(store, env, user, kind, data) {
   const time = now();
   const candidates = bankSourceConfigured(env, method)
     ? cards(env).filter(card => card.method === method) : [];
+  // Finalize truly expired, unverified order attempts before the active-order
+  // constraint is checked. Never close a payment with matching bank evidence.
+  await expireInvoices(store, time, env.P2P_MODE !== "manual");
   return store.createOrder(kind, user, { ...data, requestId: key }, {
     requestId,
     expire: expirePending(store, time),
