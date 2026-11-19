@@ -91,6 +91,42 @@ export class Store {
                      FROM donat_orders WHERE user_id = ? ORDER BY id DESC LIMIT 100`, userId);
   }
 
+  async cancelUnstartedStarsBeforeNewOrder(userId) {
+    // A Telegram Stars charge cannot complete without a successful
+    // pre_checkout_query reservation. Only remove unfinished checkout
+    // attempts that never reached this step, retaining full payment history.
+    // All updates run in one D1 batch; a concurrent pre-checkout or charge
+    // cannot be mistaken for an unpaid attempt.
+    await this.db.batch([
+      this.stmt(`UPDATE payments SET status = 'cancelled'
+        WHERE user_id = ? AND kind IN ('order', 'donat') AND method = 'stars'
+          AND status = 'pending' AND checkout_query_id IS NULL
+          AND checkout_reserved_at IS NULL AND telegram_charge_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM payment_exceptions e WHERE e.payment_id = payments.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM order_claims c WHERE
+              (c.kind = 'order' AND c.order_id = payments.order_id) OR
+              (c.kind = 'donat' AND c.order_id = payments.donat_order_id)
+          )`, userId),
+      this.stmt(`UPDATE orders SET status = 'cancelled'
+        WHERE user_id = ? AND status = 'pending' AND EXISTS(
+          SELECT 1 FROM payments p WHERE p.order_id = orders.id
+            AND p.user_id = orders.user_id AND p.kind = 'order'
+            AND p.method = 'stars' AND p.status = 'cancelled'
+            AND p.checkout_query_id IS NULL AND p.telegram_charge_id IS NULL
+        )`, userId),
+      this.stmt(`UPDATE donat_orders SET status = 'cancelled'
+        WHERE user_id = ? AND status = 'pending' AND EXISTS(
+          SELECT 1 FROM payments p WHERE p.donat_order_id = donat_orders.id
+            AND p.user_id = donat_orders.user_id AND p.kind = 'donat'
+            AND p.method = 'stars' AND p.status = 'cancelled'
+            AND p.checkout_query_id IS NULL AND p.telegram_charge_id IS NULL
+        )`, userId),
+    ]);
+  }
+
   async createOrder(kind, user, data, transfer, starsRate = 0) {
     const definition = orderTables[kind];
     const { table, column } = definition;
@@ -113,6 +149,9 @@ export class Store {
       return { order: saved, payment, invoice };
     }
     checkOrderQuote(data, info.amount);
+    // Starting a different valid order abandons old unstarted Stars invoices
+    // that otherwise permanently block the one-active-order constraint.
+    await this.cancelUnstartedStarsBeforeNewOrder(user.id);
     const stars = method === "stars" ? Math.ceil(info.amount / starsRate) : 0;
     if (method === "stars" && (!Number.isSafeInteger(starsRate) ||
         starsRate <= 0 || !Number.isSafeInteger(stars) || stars < 1 || stars > MAX_STARS)) {
