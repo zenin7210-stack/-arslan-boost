@@ -1,4 +1,4 @@
-name: Verify live multi-order Mini App and updated JS cache after migration 0014
+name: Verify live checkout after resolving D1 compound SELECT 503
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
