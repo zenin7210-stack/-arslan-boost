@@ -1,4 +1,4 @@
-name: ARSLAN BOOST apply tested P2P unique amounts with D1 safeguard
+name: ARSLAN BOOST repair owner card top-up loading and old invoice recovery
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -75,13 +75,17 @@ jobs:
           const css=fs.readFileSync('public/assets/p2p.css','utf8');
           assert.match(p2p,/invoice\/quote/);
           assert.match(p2p,/p2p-quote-banner/);
+          assert.ok(p2p.includes('const prettyAmount = value =>'));
+          assert.ok(p2p.includes('id="p2p-load-retry"'));
+          assert.ok(p2p.includes('showLoading(() => open(preferredMethod))'));
+          assert.ok(backend.includes("await expireInvoices(store, now(), env.P2P_MODE !== 'manual')"));
           assert.match(p2p,/p2p-next-button/);
           assert.match(p2p,/id="p2p-cancel-yes"/);
           assert.match(p2p,/if \(invoice\.canCancel && invoice\.status === 'pending' && !invoice\.checkedAt\) renderCancel/);
           assert.doesNotMatch(p2p,/id="p2p-latest"/);
           assert.match(backend,/const TRANSFER_STEPS = \[0,100,200,300,400,500,600,700,800,900\]/);
           assert.match(backend,/requested_amount/);
-          assert.match(index,/p2p\.js\?v=20261119-unique/);
+          assert.match(index,/p2p\.js\?v=20261119-recover/);
           assert.match(css,/#p2p-cancel-yes/);
           console.log('PASS: exact sum preview, 100 UZS fallback, cancellation screen and cached UI assets');
           JS
@@ -200,6 +204,47 @@ jobs:
             throw Error('D1 migration ledger mismatch: refuse Worker rollout');
           console.log('D1 additive change verified; previous invoices and balances preserved');
           JS
+
+      - name: Verify missing P2P_MODE and bank sources; owner-only access preflight
+        id: private_mode
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 secret list --config wrangler.production.jsonc > /tmp/arslan_secret_names.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const raw=fs.readFileSync('/tmp/arslan_secret_names.json','utf8');
+          let names=new Set();
+          try {names=new Set(JSON.parse(raw).map(x=>x.name));}
+          catch {for(const line of raw.split('\n')){const m=line.match(/\b[A-Z][A-Z0-9_]{3,}\b/);if(m)names.add(m[0]);}}
+          for(const required of ['ADMIN_ID','P2P_CARDS','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'])
+            if(!names.has(required))throw Error('Owner-only card setup missing: '+required);
+          if(names.has('P2P_USERS'))
+            throw Error('P2P_USERS is configured: owner-only scope not guaranteed; no deployment');
+          const missing=!names.has('P2P_MODE');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,'restore='+missing+'\n');
+          console.log('Owner-only card access preflight passed; restore missing P2P_MODE:',missing);
+          JS
+      - name: Restore private owner-only UZCARD/HUMO mode (without changing bank secrets)
+        if: steps.private_mode.outputs.restore == 'true'
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf 'private' | npx --yes wrangler@4 secret put P2P_MODE --config wrangler.production.jsonc
+          npx --yes wrangler@4 secret list --config wrangler.production.jsonc > /tmp/p2p_restored_names.json
+          node - <<'JS'
+          const fs=require('node:fs');
+          const raw=fs.readFileSync('/tmp/p2p_restored_names.json','utf8');
+          if(!raw.includes('P2P_MODE')) throw Error('P2P_MODE restoration was not confirmed');
+          console.log('P2P_MODE secret exists for owner-only bank flow');
+          JS
+
       - name: Deploy tested Mini App and Worker, preserving all card/payment secrets
         shell: bash
         working-directory: release/arslan-boost-cloudflare
@@ -208,4 +253,4 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
-          echo '::notice::ARSLAN BOOST card payment UX, +100 UZS wallet allocations, and safe cancellation deployed.'
+          echo '::notice::P2P card loading recovered for admins, old checked invoices expire safely, grouped 10 000 display deployed.'
