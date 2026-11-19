@@ -42,5 +42,13 @@ const conflict='assert.equal((await system.api(1, "donat/create", { ...donat, pa
 const expected='assert.equal((await system.api(1, "donat/create", { ...donat, paymentMethod: "balance" })).data.error, "invalid_payment_method");';
 if(!s.includes(conflict))throw Error('Legacy balance conflict check unavailable');
 s=s.replace(conflict,expected);
+// Direct card orders allocate +100 when a second customer selects the same amount.
+const oldSameAmount='assert.equal((await system.api(2, "donat/create", donat)).data.error, "p2p_amount_unavailable");';
+const newSameAmount='const secondBuyer = await system.api(2, "donat/create", donat); assert.equal(secondBuyer.status, 200); assert.equal((await system.api(2, "invoice/"+secondBuyer.data.invoiceId+"/status",null,"GET")).data.uniqueAmount, 22090);';
+if(!s.includes(oldSameAmount))throw Error('Old collision test not found');
+s=s.replace(oldSameAmount,newSameAmount);
+const oldSecondBuyer='assert.equal((await system.api(2, "donat/state")).data.orders.length, 0);';
+if(!s.includes(oldSecondBuyer))throw Error('Old second buyer expectation not found');
+s=s.replace(oldSecondBuyer,'assert.equal((await system.api(2, "donat/state")).data.orders.length, 1);');
 fs.writeFileSync(file,s);
 console.log('Retired legacy prepayment tests:',obsolete.length,'Direct-order tests remain enabled.');
