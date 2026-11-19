@@ -1,4 +1,4 @@
-name: Retest card collision and keyboard after removing invalid DOM assignment
+name: Verify +100 bank allocation, service-specific Stars and iOS layout (staging)
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
