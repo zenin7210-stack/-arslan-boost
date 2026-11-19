@@ -1,4 +1,4 @@
-name: Verify alternate bank settlement, updated cache and iOS UI
+name: Diagnose bank event on alternative +100 UZS invoice
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
