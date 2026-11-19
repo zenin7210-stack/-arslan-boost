@@ -1,4 +1,4 @@
-name: Publish safe P2P failure-stage reporting without changing balances
+name: Publish tested P2P exception classification after green regression
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
