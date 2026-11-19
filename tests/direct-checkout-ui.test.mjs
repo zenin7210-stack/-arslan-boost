@@ -54,8 +54,8 @@ test('Balance and Cashback panels no longer appear, while financial history stay
   assert.doesNotMatch(html,/id="quick-balance"|id="setting-balance"|class="balance-row"|data-sheet="balance"/);
   assert.match(html,/id="history"/);
   assert.match(html,/id="history-payments-tab"/);
-  assert.match(app,/\$\('#quick-balance'\)\?\.textContent/);
-  assert.match(app,/\$\('#setting-balance'\)\?\.textContent/);
+  assert.ok(app.includes("if($('#quick-balance'))$('#quick-balance').textContent"));
+  assert.ok(app.includes("if($('#setting-balance'))$('#setting-balance').textContent"));
 });
 test('All DONAT product sheets use visual viewport and keep Done button outside modal',()=>{
   assert.match(app,/keyboardDone\.parentElement !== document\.body/);
