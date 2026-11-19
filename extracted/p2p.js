@@ -497,7 +497,27 @@
         <p class="p2p-feedback" role="status"></p>
         <button type="button" class="p2p-action" id="p2p-load-retry" hidden>${e(t('retryLoading'))}</button>
         <button type="button" class="secondary" id="p2p-load-back">${e(t('back'))}</button>`);
-      within('#p2p-load-back').onclick = returnTo;
+      // "Orqaga" must offer safe cancellation of an actual pending invoice,
+      // even when loading payment methods failed. Otherwise go back normally.
+      within('#p2p-load-back').onclick = async () => {
+        const button = within('#p2p-load-back');
+        if (button.disabled) return;
+        button.disabled = true;
+        try {
+          const result = await ui.api('invoice/recover', {});
+          if (!active(version)) return;
+          if (result.active) {
+            invoice = result.active;
+            if (invoice.canCancel) return renderCancel();
+            return renderCheck();
+          }
+          returnTo();
+        } catch {
+          if (active(version)) returnTo();
+        } finally {
+          if (active(version)) button.disabled = false;
+        }
+      };
       within('#p2p-load-retry').onclick = () => retryAction?.();
       return version;
     }
