@@ -79,28 +79,42 @@ jobs:
           console.log('PASS: all 55 active tests; 26 declared skips remain skipped');
           JS
 
-      - name: Verify running frontend is previous exact-price build
+      - name: Verify current frontend versions before database writes (retry CDN)
         shell: bash
         run: |
           set -euo pipefail
           BASE='https://arslan-boost-bot.zenin7210.workers.dev'
-          curl --fail --silent --show-error --retry 2 --max-time 25 "$BASE/assets/p2p.js?v=20261120-exact20min" > /tmp/live-p2p.js
-          curl --fail --silent --show-error --retry 2 --max-time 25 "$BASE/index.html" > /tmp/live-index.html
-          curl --fail --silent --show-error --retry 2 --max-time 25 "$BASE/app.js" > /tmp/live-app.js
-          node - <<'JS'
-          const fs=require('fs'),crypto=require('crypto');
+          matched=0
+          for attempt in {1..10}; do
+            if ! curl -fsSL --max-time 25 "$BASE/assets/p2p.js?v=20261120-exact20min" -o /tmp/live-p2p.js ||
+               ! curl -fsSL --max-time 25 "$BASE/index.html" -o /tmp/live-index.html ||
+               ! curl -fsSL --max-time 25 "$BASE/app.js" -o /tmp/live-app.js; then
+              echo "Public asset read failed on attempt $attempt"; sleep 3; continue
+            fi
+            if node - <<'JS'
+          const fs=require('node:fs'),crypto=require('node:crypto');
           const sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-          const oldOrNew=[
-            ['p2p','/tmp/live-p2p.js','f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768','f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058'],
-            ['HTML','/tmp/live-index.html','8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44','9863853bd19cab3be973a8d0df4c37eb72f22fba3d3c140a15d42acca7c33c65']
+          const checks=[
+            ['p2p','/tmp/live-p2p.js',['f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768','f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058']],
+            ['HTML','/tmp/live-index.html',['8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44','9863853bd19cab3be973a8d0df4c37eb72f22fba3d3c140a15d42acca7c33c65']],
+            ['app','/tmp/live-app.js',['b66976de7e620f1682b774607e11a682458c8b0ebf824bf198866a6829dd88f6']]
           ];
-          for(const [name,path,old,newS] of oldOrNew)
-            if(![old,newS].includes(sha(path)))throw Error('Production '+name+' differs from audited versions');
-          if(sha('/tmp/live-app.js')!=='b66976de7e620f1682b774607e11a682458c8b0ebf824bf198866a6829dd88f6')
-            throw Error('Production application bundle unexpectedly changed');
-          console.log('PASS: production matches previous/desired vetted source');
+          let good=true;
+          for(const [name,path,expected] of checks){
+            const actual=sha(path);console.log('Live file:',name,actual);
+            if(!expected.includes(actual))good=false;
+          }
+          process.exit(good?0:1);
           JS
-
+            then matched=1; break; fi
+            echo "Cloudflare returned an unexpected or mixed frontend version; retry $attempt"
+            sleep 3
+          done
+          if [[ "$matched" != '1' ]]; then
+            echo '::error::Frontend differs from the frozen baseline; no DB migration or deploy performed'
+            exit 1
+          fi
+          echo 'PASS: live frontend files match vetted versions'
       - name: Verify private payment mode and D1 baseline (read-only)
         id: baseline
         working-directory: release
