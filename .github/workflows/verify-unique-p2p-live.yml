@@ -1,4 +1,4 @@
-name: Verify live unique P2P sums and safe cancellation (read-only)
+name: Verify live P2P retry, 10 000 amounts and cancellation (read-only)
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -22,8 +22,8 @@ jobs:
           set -euo pipefail
           URL=https://arslan-boost-bot.zenin7210.workers.dev
           curl --fail --silent --show-error --max-time 25 "$URL/" > /tmp/live_index.html
-          curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.js?v=20261119-unique" > /tmp/live_p2p.js
-          curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.css?v=20261119-unique" > /tmp/live_p2p.css
+          curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.js?v=20261119-recover" > /tmp/live_p2p.js
+          curl --fail --silent --show-error --max-time 25 "$URL/assets/p2p.css?v=20261119-recover" > /tmp/live_p2p.css
           curl --fail --silent --show-error --max-time 25 "$URL/healthz" > /tmp/live_health.json
           code="$(curl -sS --max-time 20 -o /tmp/p2p_unauthorized -w '%{http_code}' \
             -H 'Content-Type: application/json' \
@@ -39,9 +39,11 @@ jobs:
           const css=fs.readFileSync('/tmp/live_p2p.css','utf8');
           const health=JSON.parse(fs.readFileSync('/tmp/live_health.json','utf8'));
           const checks=[
-            ['updated JS cache URL',index.includes('p2p.js?v=20261119-unique')],
-            ['updated CSS cache URL',index.includes('p2p.css?v=20261119-unique')],
+            ['updated JS cache URL',index.includes('p2p.js?v=20261119-recover')],
+            ['updated CSS cache URL',index.includes('p2p.css?v=20261119-recover')],
             ['amount quote endpoint',js.includes("invoice/quote")],
+            ['formatted 10 000 input',js.includes('const prettyAmount = value =>')],
+            ['retry loading button',js.includes('id="p2p-load-retry"')],
             ['exact transfer quote banner',js.includes('p2p-quote-banner')],
             ['compact occupancy hint',js.includes('p2p-quote-alert')],
             ['payment back cancellation warning',js.includes("renderCancel();")],
