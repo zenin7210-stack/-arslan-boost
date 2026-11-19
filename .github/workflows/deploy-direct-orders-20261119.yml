@@ -1,4 +1,4 @@
-name: Publish new multi-order checkout with Telegram cache refresh
+name: Fix production 503 from SQLite compound SELECT on UZCARD checkout
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -235,4 +235,4 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
-          echo '::notice::Removed global one-active-order restriction; bank invoice uniqueness, payment verification and old user balances retained.'
+          echo '::notice::D1-compatible JSON1 transfer amount allocator deployed; SQL compiler and 46 payment tests passed. Payment guards and balances retained.'
