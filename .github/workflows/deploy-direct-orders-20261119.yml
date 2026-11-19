@@ -1,4 +1,4 @@
-name: Deploy wallet-free direct order checkout (BOOST and DONAT)
+name: Publish BOOST/DONAT fixes, +100 settlement trigger and iOS keyboard repair
 on:
   push:
     branches: [update/arslan-boost-next-20261119]
@@ -40,6 +40,7 @@ jobs:
           done
           git show FETCH_HEAD:public/assets/p2p.css > release/arslan-boost-cloudflare/public/assets/p2p.css
           git show FETCH_HEAD:migrations/0012_requested_card_topup.sql > release/arslan-boost-cloudflare/migrations/0012_requested_card_topup.sql
+          git show FETCH_HEAD:migrations/0013_order_exact_amount.sql > release/arslan-boost-cloudflare/migrations/0013_order_exact_amount.sql
           git show FETCH_HEAD:tests/direct-checkout-ui.test.mjs > release/arslan-boost-cloudflare/tests/approved-ui.test.mjs
           git show FETCH_HEAD:tests/history-ui.test.mjs > release/arslan-boost-cloudflare/tests/history-ui.test.mjs
           git show FETCH_HEAD:fixes/retire-wallet-topup-tests.mjs > /tmp/retire-wallet-tests.mjs
@@ -99,9 +100,11 @@ jobs:
           assert.equal(cfg.vars?.BOT_USERNAME,'arslanboostbot');
           assert.equal(cfg.vars?.ENABLE_PAYMENTS,'1');
           assert.equal('P2P_MODE' in (cfg.vars||{}),false);
-          assert.equal(fs.readdirSync('migrations').filter(f=>f.endsWith('.sql')).at(-1),'0012_requested_card_topup.sql');
+          assert.equal(fs.readdirSync('migrations').filter(f=>f.endsWith('.sql')).at(-1),'0013_order_exact_amount.sql');
           assert.match(fs.readFileSync('migrations/0012_requested_card_topup.sql','utf8'),/ALTER TABLE invoices/);
-          assert.match(fs.readFileSync('public/index.html','utf8'),/p2p\.js\?v=20261119-recovery2/);
+          assert.match(fs.readFileSync('migrations/0013_order_exact_amount.sql','utf8'),/COALESCE\(NEW.requested_amount, NEW.base_amount\)/);
+          assert.match(fs.readFileSync('public/index.html','utf8'),/p2p\.js\?v=20261119-exacts4/);
+          assert.match(fs.readFileSync('public/index.html','utf8'),/app\.js\?v=20261119-fix4/);
           JS
       - name: Read D1 migration ledger and existing safeguards (no changes)
         id: p2p_schema
@@ -126,10 +129,11 @@ jobs:
             '0008_transfer_orders.sql','0009_bank_confirmation.sql','0010_manual_approval.sql',
             '0011_safe_order_flow.sql'
           ];
-          const latest=[...old,'0012_requested_card_topup.sql'];
+          const previous=[...old,'0012_requested_card_topup.sql'];
+          const latest=[...previous,'0013_order_exact_amount.sql'];
           const ledger=rows('/tmp/p2p_schema_ledger.json').map(x=>x.name);
-          const needs=JSON.stringify(ledger)===JSON.stringify(old);
-          if(JSON.stringify(ledger)!==JSON.stringify(latest))
+          const needs=JSON.stringify(ledger)===JSON.stringify(previous);
+          if(!needs && JSON.stringify(ledger)!==JSON.stringify(latest))
             throw Error('Unexpected D1 migration ledger; deploy stopped');
           const names=new Set(rows('/tmp/p2p_schema_names.json').map(x=>x.name));
           const required=['invoices','accounts','p2p_incoming','p2p_match_incoming','p2p_settle_on_paid',
@@ -139,8 +143,26 @@ jobs:
           if(!cols.has('base_amount')||!cols.has('unique_amount')||
             !cols.has('requested_amount'))throw Error('Unexpected invoices schema before deploy');
           fs.appendFileSync(process.env.GITHUB_OUTPUT,'needs_migration='+needs+'\n');
-          console.log(needs?'Verified old D1: only nullable column migration required':'D1 already has exact requested sum column');
+          console.log(needs?'D1 ready for narrow order-amount trigger migration':'0013 already present');
           JS
+      - name: Record D1 Time Travel restoration point before replacing settlement trigger
+        if: steps.p2p_schema.outputs.needs_migration == 'true'
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments --config wrangler.production.jsonc
+      - name: Apply narrowly scoped 0013 order exact amount trigger migration
+        if: steps.p2p_schema.outputs.needs_migration == 'true'
+        shell: bash
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 d1 migrations apply arslan-boost-payments --remote --config wrangler.production.jsonc
       - name: Verify existing production schema without writing to D1
         shell: bash
         working-directory: release/arslan-boost-cloudflare
@@ -152,14 +174,18 @@ jobs:
             --command "SELECT name FROM pragma_table_info('invoices') WHERE name = 'requested_amount'" > /tmp/p2p_added_column.json
           npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
             --command 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' > /tmp/p2p_last_migration.json
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='p2p_settle_on_paid'" > /tmp/p2p_trigger_sql.json
           node - <<'JS'
           const fs=require('node:fs');
           const rows=p=>(Array.isArray(JSON.parse(fs.readFileSync(p,'utf8')))?JSON.parse(fs.readFileSync(p,'utf8')):[JSON.parse(fs.readFileSync(p,'utf8'))]).flatMap(x=>x.results||[]);
           if(rows('/tmp/p2p_added_column.json')[0]?.name!=='requested_amount')
             throw Error('D1 requested_amount column missing: refuse Worker rollout');
-          if(rows('/tmp/p2p_last_migration.json')[0]?.name!=='0012_requested_card_topup.sql')
-            throw Error('D1 migration ledger mismatch: refuse Worker rollout');
-          console.log('D1 additive change verified; previous invoices and balances preserved');
+          if(rows('/tmp/p2p_last_migration.json')[0]?.name!=='0013_order_exact_amount.sql')
+            throw Error('0013 D1 migration missing: refuse Worker rollout');
+          if(!rows('/tmp/p2p_trigger_sql.json')[0]?.sql?.includes('COALESCE(NEW.requested_amount, NEW.base_amount)'))
+            throw Error('Exact amount settlement safeguard missing');
+          console.log('D1 0013 trigger verified; customer data not altered by migration');
           JS
 
       - name: Verify existing owner-only P2P_MODE binding without changing Cloudflare settings
@@ -196,4 +222,4 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
-          echo '::notice::Wallet top-ups removed from UI and API; direct orders use existing cards or Telegram Stars. Existing balances preserved.'
+          echo '::notice::ARSLAN BOOST iOS keyboard, hidden Balance/Cashback, DONAT Stars disabled, +100 bank sum collision and verified D1 settlement migrated.'
