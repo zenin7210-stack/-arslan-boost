@@ -136,7 +136,7 @@
     cardNotReady:'Перевод на карту временно недоступен.', boostPaidNotice:'Заказ будет передан администратору после подтверждения платежа.'
   });
   const paymentMethodTiles = (selected, forOrder = false) => `<div class="arslan-payment-grid" role="group" aria-label="${escape(t('paymentSelect'))}">
-    ${['uzcard','humo',forOrder?'balance':'stars'].map(method => {
+    ${['uzcard','humo','stars'].map(method => {
       const last=method==='balance'||method==='stars';
       const icon=last ? `<span class="arslan-payment-symbol ${method}">${method==='stars'?'★':'◈'}</span>`
         : `<img src="assets/${method}.svg" alt="" width="36" height="36">`;
@@ -467,14 +467,16 @@
   }
   function renderPayments() {
     const c=state.context;
-    const enough=state.balance>=c.order.amount;
     const orderData = () => ({...c.order, lang:state.lang,
       expectedAmount:c.order.amount, requestId:requestId(c,'checkout')});
     c.method ||= 'uzcard';
-    const available = method => state.p2pMethods.includes(method);
+    const available = method => method === 'stars'
+      ? starsEnabled(config.orderStarsRate, config.orderStarsMax)
+      : state.p2pMethods.includes(method);
     showSheet('checkout', orderSummary(c)+`
       <h3 class="arslan-payment-subhead">${escape(t('paymentSelect'))}</h3>
       ${paymentMethodTiles(c.method, true)}
+      ${c.method==='stars'?paymentTerms(available('stars')):''}
       <p class="arslan-wallet-hint">${escape(t('balanceHint',{amount:sum(state.balance)}))}</p>
       <p class="arslan-wallet-hint">${escape(t('boostPaidNotice'))}</p>
       <button class="wallet-continue" type="button" id="payment-continue">${escape(t('continue'))}</button>
@@ -485,27 +487,31 @@
     });
     $('#order-topup').onclick=()=>openTopup(back);
     const button=$('#payment-continue');
-    button.disabled=!state.service || (c.method==='balance' ? !enough : !available(c.method));
+    const accept=body.querySelector('#accept-payment-terms');
+    const update=()=>{button.disabled=state.busy||!state.service||!available(c.method)
+      ||(c.method==='stars'&&!accept?.checked);};
+    accept?.addEventListener('change',update);
+    update();
     button.onclick=async()=>{
       if(button.disabled)return;
       if(c.method==='uzcard'||c.method==='humo') {
         await requestTransfer('checkout', {...orderData(), paymentMethod:c.method}, button, loadConfig);
         return;
       }
+      state.busy=true;
       button.disabled=true;
       try {
-        const result=await api('checkout',{...orderData(),paymentMethod:'balance'});
+        const result=await api('checkout',{...orderData(),paymentMethod:'stars',acceptTerms:true});
+        if(!result.payment||(result.payment.status==='pending'&&!result.payment.processing&&!result.payment.invoiceLink))
+          throw new Error('connection_error');
+        showStarsPayment({kind:'order',payment:result.payment,back});
         await syncState();
-        if(button.isConnected)showSheet('checkout-paid',`<div class="checkout-summary">${escape(t('orderNumber'))} #${escape(result.id)} · ${escape(sum(result.amount))}</div><p>${escape(t('orderSent'))}</p>`,t('paid'));
       } catch(error) {
-        if(error.message==='insufficient_balance') {
-          await syncState();
-          if(button.isConnected)renderPayments();
-        } else if(error.message==='order_quote_changed'&&button.isConnected) {
+        if(error.message==='order_quote_changed'&&button.isConnected) {
           closeSheet();await loadConfig();
         }
         toast(errorMessage(error));
-      } finally {button.disabled=false;}
+      } finally {state.busy=false;if(button.isConnected)update();}
     };
   }
   function openTopup(back) {
