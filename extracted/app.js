@@ -70,6 +70,30 @@
 
   Object.assign(dictionaries.uz,{wing:'Naparnik',comp:'Сорев',manualHint:'Kartaga o‘tkazma',method_terminal:'Bankomat',introSubtitle:'Rank oshirish xizmati',walletTitle:'Hamyonni to‘ldirish',yourBalance:'Balansingiz',continue:'Davom etish',help:'Yordam',helpDesc:'Operator bilan bog‘lanish',commission:'Komissiya 3%',topup:'Hamyonni to‘ldirish',requestSent:'Xabar yuborilgach, administrator tasdig‘ini kuting.',manualNotice:'To‘lovni administrator tasdiqlaydi.'});
   Object.assign(dictionaries.ru,{wing:'Напарник',comp:'Сорев',manualHint:'Перевод на карту',method_terminal:'Банкомат',introSubtitle:'Повышение ранга',walletTitle:'Пополнение кошелька',yourBalance:'Ваш баланс',continue:'Продолжить',help:'Помощь',helpDesc:'Связаться с оператором',commission:'Комиссия 3%',requestSent:'После отправки сообщения ожидайте подтверждения администратора.',manualNotice:'Оплату подтверждает администратор.'});
+
+  Object.assign(dictionaries.ru, {
+    historyRefresh:'Обновить', historyNoOrders:'Заказов пока нет',
+    historyNoOrdersHint:'Здесь появятся ваши заказы и их статусы после оформления.',
+    historyNoPayments:'Платежей пока нет',
+    historyNoPaymentsHint:'Пополнения баланса и оплаты заказов появятся здесь.',
+    historyNoMatches:'Нет записей с таким статусом',
+    historyNoMatchesHint:'Выберите другой фильтр или покажите все операции.',
+    historyStartOrder:'Оформить заказ', historyStartTopup:'Пополнить баланс',
+    historyClearFilter:'Показать все', historyConnectionHint:'Проверьте подключение и обновите историю.',
+    historyOrderPaidWaiting:'Оплачено · ожидает выполнения'
+  });
+  Object.assign(dictionaries.uz, {
+    historyRefresh:'Yangilash', historyNoOrders:'Hozircha buyurtmalar yo‘q',
+    historyNoOrdersHint:'Buyurtma berganingizdan keyin uning holati shu yerda ko‘rinadi.',
+    historyNoPayments:'Hozircha to‘lovlar yo‘q',
+    historyNoPaymentsHint:'Balans to‘ldirish va buyurtma to‘lovlari shu yerda chiqadi.',
+    historyNoMatches:'Bu holatda yozuvlar yo‘q',
+    historyNoMatchesHint:'Boshqa filtrni tanlang yoki barcha operatsiyalarni ko‘ring.',
+    historyStartOrder:'Buyurtma berish', historyStartTopup:'Balansni to‘ldirish',
+    historyClearFilter:'Barchasini ko‘rsatish', historyConnectionHint:'Internetni tekshiring va tarixni yangilang.',
+    historyOrderPaidWaiting:'To‘langan · bajarilishi kutilmoqda'
+  });
+
   const glyph = name => `<img class="ui-icon" src="assets/icons/${name}.svg" alt="" aria-hidden="true" width="32" height="32">`;
   all('[data-ui-icon]').forEach(node=>node.innerHTML=glyph(node.dataset.uiIcon));
 
@@ -319,35 +343,85 @@
 
   function renderHistory() {
     const isOrder = state.historyTab === 'orders';
-    $('#filters').style.display = isOrder ? 'flex' : 'none';
     const orders = [
       ...state.orders.map(item => ({ ...item, kind: 'boost' })),
       ...state.donatOrders.map(item => ({ ...item, kind: 'donat' }))
-    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    const statuses = {
-      completed: ['paid', 'approved', 'fulfilled'], cancelled: ['rejected', 'refunded'], pending: ['pending', 'review', 'in_progress']
+    ];
+    const payments = [...state.payments];
+    const group = item => {
+      if (['paid','approved','fulfilled','completed'].includes(item.status)) return 'completed';
+      if (['rejected','cancelled','refunded','expired','failed'].includes(item.status)) return 'cancelled';
+      return 'pending';
     };
-    const entries = isOrder
-      ? orders.filter(item => {
-          if (state.filter === 'all') return true;
-          if (item.kind === 'boost' && item.status === 'paid') return state.filter === 'pending';
-          return statuses[state.filter].includes(item.status);
-        })
-      : state.payments;
-    $('#history-content').innerHTML = entries.length ? entries.map(item => {
-      const service = item.kind === 'donat' ? 'Donat Shop' : 'Boost';
-      const method = t('method_' + item.method);
-      const description = !isOrder ? method : item.kind === 'donat'
-        ? shop.productTitle(item.product) + ' · ' + shop.optionLabel(item.option_label)
-        : rankName(item.current_rank) + ' → ' + rankName(item.target_rank);
-      const date = new Date(item.created_at).toLocaleString(state.lang === 'ru' ? 'ru-RU' : 'uz-UZ');
-      return `<button type="button" class="txn order-row" data-history-kind="${isOrder ? item.kind : 'payment'}" data-history-id="${escape(item.id)}">
-        <div class="txn-icon">${glyph(isOrder ? 'receipt' : 'wallet')}</div>
-        <div>${escape(isOrder ? service : t('paymentNumber'))} #${escape(item.id)}
-          <small>${escape(description)}</small><small>${escape(statusName(item.status))} · ${escape(date)}</small>
-        </div><strong>${escape(sum(item.amount))}</strong>
+    const allEntries = (isOrder ? orders : payments).sort((a,b) =>
+      (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0) || (Number(b.id) || 0) - (Number(a.id) || 0));
+    const counts = { all:allEntries.length, completed:0, pending:0, cancelled:0 };
+    for (const item of allEntries) counts[group(item)]++;
+    const filters = $('#filters');
+    filters.hidden = !state.historyLoaded || !allEntries.length;
+    all('#filters [data-history-filter]').forEach(button => {
+      const key=button.dataset.historyFilter;
+      const selected=state.filter===key;
+      button.classList.toggle('active',selected);
+      button.setAttribute('aria-pressed',String(selected));
+      button.querySelector('.history-filter-count').textContent = counts[key] ? String(counts[key]) : '';
+    });
+    all('[data-history]').forEach(button => {
+      const selected=button.dataset.history===state.historyTab;
+      button.classList.toggle('active',selected);
+      button.setAttribute('aria-selected',String(selected));
+    });
+    for (const [id,count] of [['history-orders-count',orders.length],['history-payments-count',payments.length]]) {
+      const node=$('#'+id);
+      node.hidden=count===0;
+      node.textContent=String(count);
+    }
+    const entries=state.filter==='all' ? allEntries : allEntries.filter(item=>group(item)===state.filter);
+    const root=$('#history-content');
+    if (!entries.length) {
+      const unavailable=!state.historyLoaded;
+      const filtered=state.historyLoaded&&allEntries.length>0;
+      const titleKey=unavailable?'unavailableHistory':filtered?'historyNoMatches':isOrder?'historyNoOrders':'historyNoPayments';
+      const hintKey=unavailable?'historyConnectionHint':filtered?'historyNoMatchesHint':isOrder?'historyNoOrdersHint':'historyNoPaymentsHint';
+      const action=unavailable?'refresh':filtered?'clear-filter':isOrder?'new-order':'new-topup';
+      const actionLabel=unavailable?'historyRefresh':filtered?'historyClearFilter':isOrder?'historyStartOrder':'historyStartTopup';
+      root.innerHTML=`<div class="history-empty">
+        <span class="history-empty-icon" aria-hidden="true">${glyph(isOrder?'receipt':'wallet')}</span>
+        <h2 class="history-empty-title">${escape(t(titleKey))}</h2>
+        <p class="history-empty-description">${escape(t(hintKey))}</p>
+        <button class="history-empty-action" type="button" data-history-action="${action}">${escape(t(actionLabel))}</button>
+      </div>`;
+      return;
+    }
+    root.innerHTML=entries.map(item => {
+      const kind=isOrder?item.kind:'payment';
+      const title=isOrder?(item.kind==='donat'?'Donat Shop':'BOOST')+' #'+item.id
+        :t('paymentNumber')+' #'+item.id;
+      const method = ({stars:'Telegram Stars',uzcard:'UZCARD',humo:'HUMO',balance:t('walletTitle')})[item.method]
+        || t('method_'+item.method);
+      const description=isOrder
+        ? item.kind==='donat'
+          ? shop.productTitle(item.product)+' · '+shop.optionLabel(item.option_label)
+          : rankName(item.current_rank)+' → '+rankName(item.target_rank)
+        : (item.kind==='topup'?t('walletTitle'):item.kind==='order'?'BOOST':'Donat Shop')+' · '+method;
+      const stamp=Date.parse(item.created_at);
+      const date=Number.isFinite(stamp) ? new Intl.DateTimeFormat(state.lang==='ru'?'ru-RU':'uz-UZ',
+        {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(stamp)) : '';
+      const status=item.kind==='boost'&&item.status==='paid'
+        ? t('historyOrderPaidWaiting') : statusName(item.status);
+      const statusGroup=group(item);
+      return `<button type="button" class="txn order-row history-row" data-history-kind="${escape(kind)}" data-history-id="${escape(item.id)}">
+        <span class="txn-icon" aria-hidden="true">${glyph(isOrder?'receipt':'wallet')}</span>
+        <span class="history-primary">
+          <span class="history-title">${escape(title)}</span>
+          <span class="history-description">${escape(description)}</span>
+          <span class="history-meta"><span class="history-status ${statusGroup}">${escape(status)}</span>
+            ${date?`<time class="history-date" datetime="${escape(item.created_at)}">${escape(date)}</time>`:''}</span>
+        </span>
+        <span class="history-side"><strong class="history-amount">${escape(sum(item.amount))}</strong>
+          <span class="history-chevron" aria-hidden="true">›</span></span>
       </button>`;
-    }).join('') : `<div class="empty">${escape(t(state.historyLoaded ? 'emptyHistory' : 'unavailableHistory'))}</div>`;
+    }).join('');
   }
   function openHistoryEntry(kind, id) {
     const entries = kind === 'boost' ? state.orders : kind === 'donat' ? state.donatOrders : state.payments;
