@@ -101,3 +101,17 @@ test('new orders never reserve below listed price and can recover from a cancell
   const invoice=system.db.prepare('SELECT * FROM invoices WHERE id=?').get(replacement.data.invoiceId);
   assert.ok(invoice.unique_amount>=21990);
 });
+
+test('Gold through market 100 checkout at 11990 creates actual linked card invoice',async()=>{
+  const system=app();
+  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
+    paymentMethod:'uzcard',requestId:'user-screenshot-gold-market-100'};
+  const created=await system.api(1,'donat/create',data);
+  assert.equal(created.status,200,JSON.stringify(created.data));
+  assert.equal(created.data.amount,11990);
+  assert.ok(created.data.invoiceId);
+  const invoice=system.db.prepare('SELECT * FROM invoices WHERE id=?').get(created.data.invoiceId);
+  assert.equal(invoice.requested_amount,11990);
+  assert.ok(invoice.unique_amount>=11990);
+  assert.equal((await system.api(1,'invoice/'+invoice.id+'/status',null,'GET')).data.status,'pending');
+});
