@@ -123,7 +123,7 @@ export class Store {
     const created = utc();
     const invoiceRequired = transfer
       ? `WHERE EXISTS (SELECT 1 FROM invoices WHERE user_id = ? AND request_id = ?
-                         AND payment_method = ? AND base_amount = ?)`
+                         AND payment_method = ? AND requested_amount = ?)`
       : "";
     const invoiceArgs = transfer ? [user.id, transfer.requestId, method, info.amount] : [];
     const insert = kind === "order"
