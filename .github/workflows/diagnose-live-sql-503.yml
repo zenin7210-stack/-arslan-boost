@@ -1,0 +1,93 @@
+name: Diagnose production SQL without writing invoices
+on:
+  push:
+    branches: [update/arslan-boost-next-20261119]
+    paths: [.github/workflows/diagnose-live-sql-503.yml]
+permissions: {contents: read}
+jobs:
+  explain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Prepare Cloudflare configuration
+        run: |
+          set -euo pipefail
+          unzip -q ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip -d release
+      - name: Compile four exact checkout statements against remote D1 schema without executing
+        working-directory: release/arslan-boost-cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          cat >/tmp/sql1.sql <<'SQL'
+          EXPLAIN QUERY PLAN UPDATE payments SET status = 'cancelled'
+          WHERE user_id = 0 AND kind IN ('order','donat') AND method='stars'
+          AND status='pending' AND checkout_query_id IS NULL
+          AND checkout_reserved_at IS NULL AND telegram_charge_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM payment_exceptions e WHERE e.payment_id = payments.id)
+          AND NOT EXISTS(SELECT 1 FROM order_claims c WHERE
+          (c.kind = 'order' AND c.order_id = payments.order_id)
+          OR (c.kind = 'donat' AND c.order_id = payments.donat_order_id));
+          SQL
+          cat >/tmp/sql2.sql <<'SQL'
+          EXPLAIN QUERY PLAN WITH candidate AS (
+          SELECT (11990 + steps.bump) AS exact_amount, available.card_id,
+            json_extract(available.metadata, '$.last4') AS last4,
+            json_extract(available.metadata, '$.holder') AS holder
+          FROM (
+            SELECT config.key AS card_id, config.value AS metadata,
+              COALESCE((SELECT MAX(created_at) FROM invoices WHERE invoices.card_id = config.key),0) AS last_used
+            FROM json_each('{"TESTCARD":{"last4":"0000","holder":"TEST","enabled":1}}') AS config
+            LEFT JOIN p2p_card_flags flag ON flag.card_id = config.key
+            WHERE COALESCE(flag.enabled, json_extract(config.value, '$.enabled')) = 1
+          ) AS available CROSS JOIN (SELECT 0 AS bump UNION ALL SELECT 100 AS bump UNION ALL SELECT 200 AS bump
+            UNION ALL SELECT 300 AS bump UNION ALL SELECT 400 AS bump UNION ALL SELECT 500 AS bump
+            UNION ALL SELECT 600 AS bump UNION ALL SELECT 700 AS bump UNION ALL SELECT 800 AS bump
+            UNION ALL SELECT 900 AS bump) AS steps
+          WHERE 11990 + steps.bump <= 10000000
+            AND NOT EXISTS(SELECT 1 FROM invoices WHERE unique_amount = 11990 + steps.bump AND status = 'pending')
+            AND NOT EXISTS(SELECT 1 FROM invoices WHERE card_id = available.card_id AND unique_amount = 11990 + steps.bump
+              AND (expires_at > 1795110000 OR (status <> 'paid' AND created_at >= 1795100000)))
+          ORDER BY steps.bump ASC, available.last_used ASC, available.card_id ASC LIMIT 1
+          )
+          INSERT INTO invoices (
+            user_id, request_id, base_amount, unique_amount, requested_amount, payment_method, card_id,
+            card_number, card_holder, status, created_at, expires_at, lang
+          )
+          SELECT 0, 'TEST-DIAG', candidate.exact_amount, candidate.exact_amount, 11990, 'uzcard', candidate.card_id,
+          candidate.last4, candidate.holder, 'pending', 1795110000, 1795110600, 'uz'
+          FROM candidate WHERE NOT EXISTS (SELECT 1 FROM invoices WHERE user_id = 0 AND status = 'pending')
+          AND NOT EXISTS (SELECT 1 FROM invoices WHERE user_id = 0 AND request_id = 'TEST-DIAG')
+          AND NOT EXISTS (SELECT 1 FROM donat_orders WHERE user_id = 0 AND request_key = 'TEST-DIAG')
+          RETURNING *;
+          SQL
+          cat >/tmp/sql3.sql <<'SQL'
+          EXPLAIN QUERY PLAN INSERT INTO donat_orders (user_id,username,product,option_code,option_label,detail,
+          amount,method,lang,status,request_key,created_at)
+          SELECT 0,'TEST','gold_rinok','100','100 Gold','',11990,'uzcard','uz','pending','TEST-DIAG','2026-11-19'
+          WHERE EXISTS (SELECT 1 FROM invoices WHERE user_id=0 AND request_id='TEST-DIAG'
+          AND payment_method='uzcard' AND requested_amount=11990)
+          ON CONFLICT (user_id,request_key) DO NOTHING;
+          SQL
+          cat >/tmp/sql4.sql <<'SQL'
+          EXPLAIN QUERY PLAN INSERT INTO payments (user_id,donat_order_id,kind,method,amount,stars,status,
+          request_key,created_at,admin_notice_pending)
+          SELECT user_id,id,'donat','uzcard',amount,0,status,'donat:'||id,created_at,0 FROM donat_orders
+          WHERE user_id=0 AND request_key='TEST-DIAG' AND method='uzcard'
+          AND status='pending' AND amount=11990 ON CONFLICT (donat_order_id) DO NOTHING;
+          SQL
+          for i in 1 2 3 4; do
+            if npx --yes wrangler@4 d1 execute arslan-boost-payments --remote \
+              --config wrangler.production.jsonc --file "/tmp/sql$i.sql" --json >/tmp/out 2>/tmp/error; then
+              echo "SQL $i: COMPILED"
+            else
+              echo "SQL $i: ERROR"
+              head -c 1500 /tmp/error
+              head -c 350 /tmp/out
+              exit 1
+            fi
+          done
