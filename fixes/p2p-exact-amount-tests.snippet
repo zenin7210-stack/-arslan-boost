@@ -1,0 +1,47 @@
+
+test('quoted wallet amount bumps by 100, is not reserved by quote, and credits exactly the cash received',async t=>{
+  t.mock.method(globalThis,'fetch',async ()=>Response.json({ok:true,result:{message_id:555}}));
+  const system=app();
+  const request={amount:10000,method:'uzcard'};
+  const firstQuote=await system.api(1,'invoice/quote',request);
+  assert.deepEqual([firstQuote.status,firstQuote.data.uniqueAmount,firstQuote.data.baseAmount],[200,10000,10000]);
+  assert.equal(system.db.prepare('SELECT COUNT(*) AS n FROM invoices').get().n,0,'quote must be read-only');
+  const first=await system.api(1,'invoice',{...request,requestId:'wallet-1'});
+  assert.equal(first.data.uniqueAmount,10000);
+  const nextQuote=await system.api(2,'invoice/quote',request);
+  assert.equal(nextQuote.data.uniqueAmount,10100);
+  assert.equal(system.db.prepare('SELECT COUNT(*) AS n FROM invoices').get().n,1);
+  const second=await system.api(2,'invoice',{...request,requestId:'wallet-2'});
+  assert.deepEqual([second.status,second.data.baseAmount,second.data.uniqueAmount],[200,10000,10100]);
+  const third=await system.api(3,'invoice',{...request,requestId:'wallet-3'});
+  assert.equal(third.data.uniqueAmount,10200);
+  const existing=await system.api(2,'invoice',{...request,requestId:'wallet-2'});
+  assert.equal(existing.data.id,second.data.id);
+  assert.equal((await system.api(2,'invoice/quote',request)).data.existing,true);
+  assert.equal(system.db.prepare('SELECT COUNT(*) AS n FROM invoices').get().n,3);
+  const before=await system.api(2,'invoice/'+second.data.id+'/status',null,'GET');
+  assert.deepEqual([before.data.status,before.data.balance],['pending',0]);
+  const falseClaim=await system.api(2,'invoice/'+second.data.id+'/check',{});
+  assert.equal(falseClaim.data.status,'pending');
+  assert.equal(falseClaim.data.balance,0);
+  const bank={sender:'BankDemo',eventId:'sms:exact100',text:notification(10100,'BANK10100TEST')};
+  const settled=await system.relay(bank);
+  assert.equal(settled.data.matched,true);
+  assert.equal((await system.relay({...bank,eventId:'sms:exact101'})).data.duplicate,true);
+  await system.drain();
+  const after=await system.api(2,'invoice/'+second.data.id+'/status',null,'GET');
+  assert.deepEqual([after.data.status,after.data.balance],['paid',10100]);
+  const invoice=system.db.prepare('SELECT requested_amount,base_amount,unique_amount FROM invoices WHERE id=?').get(second.data.id);
+  assert.deepEqual([invoice.requested_amount,invoice.base_amount,invoice.unique_amount],[10000,10100,10100]);
+  assert.equal((await system.api(2,'state')).data.starsBalance,0,'Stars must not be affected');
+});
+test('new bank order retains exact advertised price and cannot silently acquire a surcharge',async t=>{
+  t.mock.method(globalThis,'fetch',async ()=>Response.json({ok:true,result:{message_id:5}}));
+  const system=app();
+  const first=await system.api(1,'invoice',{amount:12000,method:'uzcard',requestId:'reserve-12000'});
+  assert.equal(first.data.uniqueAmount,12000);
+  const boost={fromIndex:1,toIndex:2,mode:'wing',gameId:'23456',expectedAmount:12000,
+    paymentMethod:'uzcard',requestId:'boost-no-extra-fee'};
+  const second=await system.api(2,'checkout',boost);
+  assert.deepEqual([second.status,second.data.error],[409,'p2p_amount_unavailable']);
+});
