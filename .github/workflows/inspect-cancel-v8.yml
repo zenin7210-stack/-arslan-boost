@@ -1,0 +1,74 @@
+name: ARSLAN BOOST inspect checkout cancellation v8
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/inspect-cancel-v8.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: arslan-boost-v3-verified-source
+          run-id: 44702451221
+          repository: zenin7210-stack/-arslan-boost
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+      - name: Apply production v5 and v7 patches for code inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,lzma,hashlib
+          patch=lzma.decompress(base64.b64decode(''.join(Path('releases/admin-booking-hotfix-v5-20261120.xz64.txt').read_text().split())))
+          assert hashlib.sha256(patch).hexdigest()=='7444e19ef995e57e23341d828ce568782604c29f1d33532fc2bcfca41548732d'
+          Path('/tmp/v5.patch').write_bytes(patch)
+          PY
+          cd release
+          git init -q
+          git apply /tmp/v5.patch
+          cd ..
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,lzma,hashlib
+          code=lzma.decompress(base64.b64decode(''.join(Path('releases/payment-holds-v7-20261120.xz64.txt').read_text().split())))
+          assert hashlib.sha256(code).hexdigest()=='60b8704a40ef05d1b91e15caf84858781473f93dd9b78e7b3d09cd60608d5f83'
+          Path('release/v7_apply.py').write_bytes(code)
+          PY
+          cd release
+          python3 v7_apply.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          scans={
+           'public/app.js':r'To.?lovni ochish|To.?lov hozircha|Qayta tekshirish|Orqaga|history|p2p|cancel|expired|orderDetails|paymentOpen|paymentStatus',
+           'public/assets/p2p.js':r'To.?lov hozircha|Qayta tekshirish|Orqaga|cancel|expired|retry|not_found|found|onClose|openPayment|handle',
+           'src/p2p.mjs':r'cancel|expired|to.?lov|paid_check|confirm|status|pending|hold',
+           'src/worker.mjs':r'cancel|expired|/api/|p2p',
+          }
+          for name,regex in scans.items():
+            p=Path(name)
+            if not p.exists():continue
+            s=p.read_text()
+            pat=re.compile(regex,re.I)
+            matches=list(pat.finditer(s))
+            print('FILE',name,'size',len(s),'matches',len(matches))
+            items=[]
+            for m in matches:
+              st=max(0,m.start()-460)
+              en=min(len(s),m.end()+650)
+              if any(st<right for left,right in items):continue
+              items.append((st,en))
+              if len(items)>=38:break
+            for i,(st,en) in enumerate(items):
+              snippet=s[st:en].replace('\\n','\\\\n')
+              print('====',name,i,'offset',st,'====')
+              print(snippet)
+          PY
