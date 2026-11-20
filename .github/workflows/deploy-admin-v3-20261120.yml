@@ -184,14 +184,14 @@ jobs:
           Path('/tmp/admin-v3.patch').write_bytes(patch)
           PY
           cd release
-          printf '%s  %s\\n' \
+          printf '%s  %s\n' \
             '7f3ccef2471de049524ebdc6f5f78a1e3432acd2b22f8b60825f114362fe414d' src/worker.mjs \
             '5a50be0a87d7e09990148e60998f5c9dd4f5c60088cf1225b621a3b40be447ce' src/p2p.mjs \
             '66bb2dcbed80beaa9b3390c99628edf077590dd32184c23ae235d4705fcbe223' src/support-chat.mjs \
             'b85f1ca1df9c68616d39df9ba4e818eb6f7bb458566aeba56a3ea43650cd929c' tests/p2p.test.mjs | sha256sum -c -
           git apply --check /tmp/admin-v3.patch
           git apply /tmp/admin-v3.patch
-          printf '%s  %s\\n' \
+          printf '%s  %s\n' \
             '94c59e327532f1f75931d764f60d263efba85229c8fe9bf74c2b238c8c278ced' src/worker.mjs \
             'd03c894fa2e5384de36e2ef63ecad25ae5b7b9d5a667368abe48a3582d9b387f' src/p2p.mjs \
             'da5b4cffe05a1816e531d4a636184c436a5cde6f51fe4305144f4d3f0e092730' src/support-chat.mjs \
@@ -215,214 +215,10 @@ jobs:
           set -euo pipefail
           find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
           npm test > /tmp/admin-v3-test-results.txt 2>&1
-          cat /tmp/admin-v3-test-results.txt | tail -20
+          tail -20 /tmp/admin-v3-test-results.txt
           grep -q '^# pass 73$' /tmp/admin-v3-test-results.txt
           grep -q '^# fail 0$' /tmp/admin-v3-test-results.txt
           grep -q '^# skipped 26$' /tmp/admin-v3-test-results.txt
-      - name: Check live production baseline before touching Cloudflare
-        run: |
-          set -euo pipefail
-          URL='https://arslan-boost-bot.zenin7210.workers.dev'
-          mkdir -p /tmp/live-assets/donat
-          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
-            curl -fsSL --retry 2 --max-time 25 "$URL/$f?v=pro-v2-preflight" > "/tmp/live-$f"
-          done
-          printf '%s  %s\n' \
-            '334e97b5f9525cb3fdef58512737014ca637a955790b6c2dd0b3945e5ceab2d1' /tmp/live-index.html \
-            '408b2aac0d838d52d2c4797031aff4b044c3ea8e75dc42c161a1b3c40a310f43' /tmp/live-app.js \
-            '652e9e067a2edfb93a25daaeb23b2a83ecc165c698a29f16255b9146453d21cd' /tmp/live-app.css \
-            '478464e37e420eef143e7a756501a3834642345445ed3142c6dc89082aef15ba' /tmp/live-assets/p2p.js \
-            'f82f4fe036cd5d06b8f7eeb58eacc655ada88152e84d0f028fd492a646a26d64' /tmp/live-assets/donat/shop.css | sha256sum -c -
-          status="$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 15 -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
-          [[ "$status" = 401 || "$status" = 403 ]] || { echo '::error::Admin API unexpectedly public'; exit 1; }
-      - name: Check private payment mode and latest D1 migration (read-only)
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/settings.json
-          node - <<'JS'
-          const j=require('/tmp/settings.json'),b=j.result?.bindings||[];
-          if(!j.success||!b.some(x=>x.name==='P2P_MODE'&&x.text==='private'))throw Error('Private payment mode changed');
-          for(const k of ['ADMIN_ID','P2P_CARDS','P2P_CARDXABAR_SECRET','P2P_HUMO_SECRET'])
-            if(!b.some(x=>x.name===k))throw Error('Missing payment secret '+k);
-          JS
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > /tmp/d1-ledger.json
-          node - <<'JS'
-          const x=require('/tmp/d1-ledger.json');
-          if(x.flatMap(r=>r.results||[])[0]?.name!=='0017_support_dialogs.sql')throw Error('DB schema mismatch');
-          JS
-      - name: Deploy tested source with unchanged D1 and secrets
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
-          echo 'Published verified Telegram admin card redesign without payment schema changes'
-      - name: Verify actual live asset hashes and health
-        working-directory: release
-        run: |
-          set -euo pipefail
-          URL='https://arslan-boost-bot.zenin7210.workers.dev'
-          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
-            expected="$(sha256sum "public/$f" | cut -d' ' -f1)"
-            matched=0
-            for n in {1..12}; do
-              if curl -fsSL --max-time 20 "$URL/$f?v=20261120-admin-v3" > /tmp/v2-current; then
-                [[ "$(sha256sum /tmp/v2-current | cut -d' ' -f1)" = "$expected" ]] && { matched=1; break; }
-              fi
-              sleep 3
-            done
-            [[ "$matched" = 1 ]] || { echo "::error::Live asset mismatch: $f"; exit 1; }
-          done
-          curl -fsSL --max-time 20 "$URL/healthz" > /tmp/v2-health.json
-          node - <<'JS'
-          const j=require('/tmp/v2-health.json');
-          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production health check failed');
-          console.log('Professional admin notifications deployed, health green. No actual bank transfer tested.');
-          JS
- /tmp/admin-v3-test-results.txt
-          grep -q '^# fail 0      - name: Check live production baseline before touching Cloudflare
-        run: |
-          set -euo pipefail
-          URL='https://arslan-boost-bot.zenin7210.workers.dev'
-          mkdir -p /tmp/live-assets/donat
-          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
-            curl -fsSL --retry 2 --max-time 25 "$URL/$f?v=pro-v2-preflight" > "/tmp/live-$f"
-          done
-          printf '%s  %s\n' \
-            '334e97b5f9525cb3fdef58512737014ca637a955790b6c2dd0b3945e5ceab2d1' /tmp/live-index.html \
-            '408b2aac0d838d52d2c4797031aff4b044c3ea8e75dc42c161a1b3c40a310f43' /tmp/live-app.js \
-            '652e9e067a2edfb93a25daaeb23b2a83ecc165c698a29f16255b9146453d21cd' /tmp/live-app.css \
-            '478464e37e420eef143e7a756501a3834642345445ed3142c6dc89082aef15ba' /tmp/live-assets/p2p.js \
-            'f82f4fe036cd5d06b8f7eeb58eacc655ada88152e84d0f028fd492a646a26d64' /tmp/live-assets/donat/shop.css | sha256sum -c -
-          status="$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 15 -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
-          [[ "$status" = 401 || "$status" = 403 ]] || { echo '::error::Admin API unexpectedly public'; exit 1; }
-      - name: Check private payment mode and latest D1 migration (read-only)
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/settings.json
-          node - <<'JS'
-          const j=require('/tmp/settings.json'),b=j.result?.bindings||[];
-          if(!j.success||!b.some(x=>x.name==='P2P_MODE'&&x.text==='private'))throw Error('Private payment mode changed');
-          for(const k of ['ADMIN_ID','P2P_CARDS','P2P_CARDXABAR_SECRET','P2P_HUMO_SECRET'])
-            if(!b.some(x=>x.name===k))throw Error('Missing payment secret '+k);
-          JS
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > /tmp/d1-ledger.json
-          node - <<'JS'
-          const x=require('/tmp/d1-ledger.json');
-          if(x.flatMap(r=>r.results||[])[0]?.name!=='0017_support_dialogs.sql')throw Error('DB schema mismatch');
-          JS
-      - name: Deploy tested source with unchanged D1 and secrets
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
-          echo 'Published verified Telegram admin card redesign without payment schema changes'
-      - name: Verify actual live asset hashes and health
-        working-directory: release
-        run: |
-          set -euo pipefail
-          URL='https://arslan-boost-bot.zenin7210.workers.dev'
-          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
-            expected="$(sha256sum "public/$f" | cut -d' ' -f1)"
-            matched=0
-            for n in {1..12}; do
-              if curl -fsSL --max-time 20 "$URL/$f?v=20261120-admin-v3" > /tmp/v2-current; then
-                [[ "$(sha256sum /tmp/v2-current | cut -d' ' -f1)" = "$expected" ]] && { matched=1; break; }
-              fi
-              sleep 3
-            done
-            [[ "$matched" = 1 ]] || { echo "::error::Live asset mismatch: $f"; exit 1; }
-          done
-          curl -fsSL --max-time 20 "$URL/healthz" > /tmp/v2-health.json
-          node - <<'JS'
-          const j=require('/tmp/v2-health.json');
-          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production health check failed');
-          console.log('Professional admin notifications deployed, health green. No actual bank transfer tested.');
-          JS
- /tmp/admin-v3-test-results.txt
-          grep -q '^# skipped 26      - name: Check live production baseline before touching Cloudflare
-        run: |
-          set -euo pipefail
-          URL='https://arslan-boost-bot.zenin7210.workers.dev'
-          mkdir -p /tmp/live-assets/donat
-          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
-            curl -fsSL --retry 2 --max-time 25 "$URL/$f?v=pro-v2-preflight" > "/tmp/live-$f"
-          done
-          printf '%s  %s\n' \
-            '334e97b5f9525cb3fdef58512737014ca637a955790b6c2dd0b3945e5ceab2d1' /tmp/live-index.html \
-            '408b2aac0d838d52d2c4797031aff4b044c3ea8e75dc42c161a1b3c40a310f43' /tmp/live-app.js \
-            '652e9e067a2edfb93a25daaeb23b2a83ecc165c698a29f16255b9146453d21cd' /tmp/live-app.css \
-            '478464e37e420eef143e7a756501a3834642345445ed3142c6dc89082aef15ba' /tmp/live-assets/p2p.js \
-            'f82f4fe036cd5d06b8f7eeb58eacc655ada88152e84d0f028fd492a646a26d64' /tmp/live-assets/donat/shop.css | sha256sum -c -
-          status="$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 15 -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
-          [[ "$status" = 401 || "$status" = 403 ]] || { echo '::error::Admin API unexpectedly public'; exit 1; }
-      - name: Check private payment mode and latest D1 migration (read-only)
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/settings.json
-          node - <<'JS'
-          const j=require('/tmp/settings.json'),b=j.result?.bindings||[];
-          if(!j.success||!b.some(x=>x.name==='P2P_MODE'&&x.text==='private'))throw Error('Private payment mode changed');
-          for(const k of ['ADMIN_ID','P2P_CARDS','P2P_CARDXABAR_SECRET','P2P_HUMO_SECRET'])
-            if(!b.some(x=>x.name===k))throw Error('Missing payment secret '+k);
-          JS
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > /tmp/d1-ledger.json
-          node - <<'JS'
-          const x=require('/tmp/d1-ledger.json');
-          if(x.flatMap(r=>r.results||[])[0]?.name!=='0017_support_dialogs.sql')throw Error('DB schema mismatch');
-          JS
-      - name: Deploy tested source with unchanged D1 and secrets
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
-          echo 'Published verified Telegram admin card redesign without payment schema changes'
-      - name: Verify actual live asset hashes and health
-        working-directory: release
-        run: |
-          set -euo pipefail
-          URL='https://arslan-boost-bot.zenin7210.workers.dev'
-          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
-            expected="$(sha256sum "public/$f" | cut -d' ' -f1)"
-            matched=0
-            for n in {1..12}; do
-              if curl -fsSL --max-time 20 "$URL/$f?v=20261120-admin-v3" > /tmp/v2-current; then
-                [[ "$(sha256sum /tmp/v2-current | cut -d' ' -f1)" = "$expected" ]] && { matched=1; break; }
-              fi
-              sleep 3
-            done
-            [[ "$matched" = 1 ]] || { echo "::error::Live asset mismatch: $f"; exit 1; }
-          done
-          curl -fsSL --max-time 20 "$URL/healthz" > /tmp/v2-health.json
-          node - <<'JS'
-          const j=require('/tmp/v2-health.json');
-          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production health check failed');
-          console.log('Professional admin notifications deployed, health green. No actual bank transfer tested.');
-          JS
- /tmp/admin-v3-test-results.txt
       - name: Check live production baseline before touching Cloudflare
         run: |
           set -euo pipefail
