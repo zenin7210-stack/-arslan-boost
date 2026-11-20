@@ -92,11 +92,10 @@ jobs:
           source=js.read_text()
           begin=source.index("      const greeting='⚡ ARSLAN BOOST’ga xush kelibsiz!")
           end=source.index("\n      try {",begin)
-          replacement=r"""      // One native Telegram photo + caption + Web App button.
-      // Animate only the three selected custom emoji; image remains static.
-      const greeting='⚡ ARSLAN BOOST’ga xush kelibsiz!\n\n🚀 Rank Boost — Standoff 2\nDonat Shop — o‘yin valyutalari\n💰 Gold sotish — bozor orqali\n\nBuyurtma berish uchun Mini App’ni oching.';
-      const customGreeting='<tg-emoji emoji-id="5404614161831341267">⚡</tg-emoji> <b>ARSLAN BOOST’ga xush kelibsiz!</b>\n\n<tg-emoji emoji-id="5404812288672703936">🚀</tg-emoji> <b>Rank Boost</b> — Standoff 2\n<b>Donat Shop</b> — o‘yin valyutalari\n<tg-emoji emoji-id="5123093405064234078">💰</tg-emoji> <b>Gold sotish</b> — bozor orqali\n\n<i>Buyurtma berish uchun Mini App’ni oching.</i>';
-      const photo=new URL('assets/start-welcome-v6.jpg',url).href;"""
+          greeting=r"""      const greeting='⚡ ARSLAN BOOST’ga xush kelibsiz!\n\n🚀 Rank Boost — Standoff 2\nDonat Shop — o‘yin valyutalari\n💰 Gold sotish — bozor orqali\n\nBuyurtma berish uchun Mini App’ni oching.';"""
+          custom=r"""      const customGreeting='<tg-emoji emoji-id="5404614161831341267">⚡</tg-emoji> <b>ARSLAN BOOST’ga xush kelibsiz!</b>\n\n<tg-emoji emoji-id="5404812288672703936">🚀</tg-emoji> <b>Rank Boost</b> — Standoff 2\n<b>Donat Shop</b> — o‘yin valyutalari\n<tg-emoji emoji-id="5123093405064234078">💰</tg-emoji> <b>Gold sotish</b> — bozor orqali\n\n<i>Buyurtma berish uchun Mini App’ni oching.</i>';"""
+          photo="      const photo=new URL('assets/start-welcome-v6.jpg',url).href;"
+          replacement="\n".join([greeting,custom,photo])
           original=source[begin:end]
           assert original.count("const photo=new URL('assets/start-banner.jpg',url)") == 1, 'Unexpected greeting code'
           assert '5404614161831341267' in original and '5123093405064234078' in original
