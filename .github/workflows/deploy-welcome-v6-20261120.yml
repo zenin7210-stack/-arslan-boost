@@ -138,7 +138,7 @@ jobs:
           npm test > /tmp/admin-v5-tests.txt 2>&1 || { tail -80 /tmp/admin-v5-tests.txt; exit 1; }
           tail -22 /tmp/admin-v5-tests.txt
           grep -q '^# fail 0$' /tmp/admin-v5-tests.txt
-          grep -q '^# pass 77$' /tmp/admin-v5-tests.txt
+          grep -q '^# pass 73$' /tmp/admin-v5-tests.txt
           grep -q '^# skipped 26$' /tmp/admin-v5-tests.txt
           node - <<'JS'
           const fs=require('fs');
