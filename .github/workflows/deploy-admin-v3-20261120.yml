@@ -216,7 +216,10 @@ jobs:
           find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
           npm test > /tmp/admin-v3-test-results.txt 2>&1
           cat /tmp/admin-v3-test-results.txt | tail -20
-          grep -q '^# pass 73      - name: Check live production baseline before touching Cloudflare
+          grep -q '^# pass 73$' /tmp/admin-v3-test-results.txt
+          grep -q '^# fail 0$' /tmp/admin-v3-test-results.txt
+          grep -q '^# skipped 26$' /tmp/admin-v3-test-results.txt
+      - name: Check live production baseline before touching Cloudflare
         run: |
           set -euo pipefail
           URL='https://arslan-boost-bot.zenin7210.workers.dev'
