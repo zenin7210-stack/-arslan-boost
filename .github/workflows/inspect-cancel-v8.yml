@@ -72,3 +72,25 @@ jobs:
               print('====',name,i,'offset',st,'====')
               print(snippet)
           PY
+
+      - name: Inspect exact cancellation gates and order detail button flow
+        shell: bash
+        run: |
+          cd release
+          python3 - <<'PY'
+          from pathlib import Path
+          sources={
+            'src/p2p.mjs':['function invoiceState','async function cancelUnpaidInvoice','export async function p2pApi'],
+            'public/assets/p2p.js':['function returnTo','function renderInvoice','function renderCancel','function renderCheck','function showLoading','function resume'],
+            'public/app.js':['function renderHistory','function openHistoryEntry','function openHistoryEntry(','async function requestTransfer','function requestTransfer'],
+          }
+          for filename,terms in sources.items():
+            s=Path(filename).read_text()
+            print('===FILE',filename)
+            for term in terms:
+              at=s.find(term)
+              if at<0: continue
+              start=max(0,at-300)
+              end=min(len(s),at+(7800 if ('openHistoryEntry' in term or 'cancelUnpaidInvoice' in term) else 4500))
+              print('===TERM',repr(term),'offset',at,'===\\n'+s[start:end])
+          PY
