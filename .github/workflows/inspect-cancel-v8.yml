@@ -94,3 +94,44 @@ jobs:
               end=min(len(s),at+(7800 if ('openHistoryEntry' in term or 'cancelUnpaidInvoice' in term) else 4500))
               print('===TERM',repr(term),'offset',at,'===\\n'+s[start:end])
           PY
+
+      - name: Inspect bank event correlation, cron alerts, history markup and CSS
+        shell: bash
+        run: |
+          cd release
+          python3 - <<'PY'
+          from pathlib import Path
+          cases={
+            'src/p2p.mjs':[
+              ('export async function receiveIncoming',6500),
+              ('async function alertP2pDisputes',5100),
+              ('export async function p2pCron',1800),
+              ('function formatAdminInvoiceCard',1600),
+              ('async function adminBankNotice',1350),
+              ('async function expireInvoices',2100),
+              ('export async function expireInvoices',2300),
+            ],
+            'public/app.js':[
+              ("function renderHistory()",6100),
+              ("function openHistoryEntry(",3400),
+              ("data-history-filter",800),
+              ("$('#filters')",500)
+            ],
+            'public/index.html':[
+              ('id="filters"',1900),
+              ('id="history-orders-count"',1300)
+            ],
+            'public/assets/p2p.js':[
+              ('function renderCheck()',3400),
+              ('function renderInvoice()',3600)
+            ],
+            'wrangler.production.jsonc':[('"triggers"',700)]
+          }
+          for fn,terms in cases.items():
+            s=Path(fn).read_text()
+            for term,window in terms:
+              p=s.find(term)
+              if p<0:continue
+              print(f'=== TARGET {fn} {term} offset {p} ===')
+              print(s[max(0,p-160):min(len(s),p+window)])
+          PY
