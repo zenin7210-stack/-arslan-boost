@@ -186,7 +186,7 @@ jobs:
           set -euo pipefail
           node --check src/p2p.mjs
           node --check src/worker.mjs
-          npm test > /tmp/admin-v5-tests.txt 2>&1 || { tail -80 /tmp/admin-v5-tests.txt; exit 1; }
+          npm test > /tmp/admin-v5-tests.txt 2>&1 || { grep -n -A 26 -B 3 '^not ok ' /tmp/admin-v5-tests.txt || true; tail -80 /tmp/admin-v5-tests.txt; exit 1; }
           tail -22 /tmp/admin-v5-tests.txt
           grep -q '^# fail 0$' /tmp/admin-v5-tests.txt
           grep -q '^# pass 74$' /tmp/admin-v5-tests.txt
