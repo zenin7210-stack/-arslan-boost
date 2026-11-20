@@ -1,0 +1,489 @@
+name: ARSLAN BOOST PRO v3 real admin payment notices
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/deploy-admin-v3-20261120.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Retrieve locked known-good source
+        uses: actions/download-artifact@v4
+        with:
+          name: arslan-direct-order-tested
+          run-id: 44595628857
+          repository: zenin7210-stack/-arslan-boost
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+
+      - name: Verify baseline and reconstruct exact currently deployed 10m-price20 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            '8ef30201f0b9a60fe8ed1f5abef4aa89868d3d60dc279108f28dd058097628ef' release/src/worker.mjs \
+            'b32c780233bad0af22fac1c5f6b7d7d14be8451e790840d89db627cacd97d030' release/src/p2p.mjs \
+            'e28c3a1e36ad831ddbf15fc311278de641f03b511e21cf963f50f3dddb38e5e7' release/public/app.js \
+            'db6b5524bc28bbb5258e59ca8a292ad2555e2fdb4dd5a5ffb600ddafd3d15a97' release/public/assets/p2p.js \
+            '5ebc005abf37d75e172866a2d233cdc9ffbe41d9d145abc2b80f6dfffdd3fc4d' release/public/index.html \
+            '5abec56a8932e47a849b4b81e9fb3157a4c4a6d6224174e75371f9477cc707f0' release/wrangler.production.jsonc | sha256sum -c -
+          base64 -d fixes/pro-ui-payment-20261120.py.b64 > /tmp/original-ui.py
+          printf '%s  %s\n' \
+            '8828d6eef1660de86881a2c0c64a4412e31e272a5cdb37598ed6c0cf8295e0d5' /tmp/original-ui.py | sha256sum -c -
+          python3 /tmp/original-ui.py
+          python3 fixes/apply-price20.py release
+          python3 fixes/test-price20.py release
+          printf '%s  %s\n' \
+            '8ef30201f0b9a60fe8ed1f5abef4aa89868d3d60dc279108f28dd058097628ef' release/src/worker.mjs \
+            '58fd0d701518fd14d02b1fda8ab4e90a70de4f9216e5a860f6cbaf022677b1cc' release/src/p2p.mjs \
+            'b66976de7e620f1682b774607e11a682458c8b0ebf824bf198866a6829dd88f6' release/public/app.js \
+            'f1ef7c1219d3b3abac6c098381ee9f7ab69d3d9a673ad5da4610956310adc768' release/public/assets/p2p.js \
+            '8415be6a3c2cee2b62ff2aa6296dcc2d42eb34e00777fd2fe737c2809b025e44' release/public/index.html | sha256sum -c -
+          echo 'PASS: exact previous 10m fixed-price source reconstructed'
+
+      - name: Apply audited chat/admin/sound partner release patches only
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' '8284955adbfd53a634cf97ab6a36e2179daf5de914e3c600846b512ebc931865' releases/chat10-adminsound-20261120.xz64.txt | sha256sum -c -
+          python3 - <<'PY'
+          import base64,lzma,hashlib
+          from pathlib import Path
+          body=Path('releases/chat10-adminsound-20261120.xz64.txt').read_text().strip().splitlines()
+          if len(body)!=4 or body[0]!='BASE_XZ64' or body[2]!='ADMIN_XZ64':
+              raise RuntimeError('Release patch envelope unexpected')
+          for name,encoded,expected in [
+              ('base',body[1],'c0340c775e4d710f4afeb11f52833bdcda7e4dcd4205894e4de997b6293ce32a'),
+              ('admin',body[3],'eeb8386e8a3166bcb760baab7d2d004a09c22c277fb4af71f71acf5966437f92')]:
+              data=lzma.decompress(base64.b64decode(encoded,validate=True))
+              if hashlib.sha256(data).hexdigest()!=expected:
+                  raise RuntimeError(f'Patch integrity mismatch: {name}')
+              Path('/tmp/'+name+'.patch').write_bytes(data)
+          print('Two exact audited source patches recovered')
+          PY
+          cd release
+          git init -q
+          git apply --check /tmp/base.patch
+          git apply /tmp/base.patch
+          git apply --check /tmp/admin.patch
+          git apply /tmp/admin.patch
+          printf '%s  %s\n' \
+            'fc44a2477081389c661bff23dfc2fe6b0e1a89c951f5ea0d9f92075991d73441' src/worker.mjs \
+            '344dcb1729e8993b47b36d049ea3fd5f3c3bdd197154d3817ca34e39d01af884' src/p2p.mjs \
+            'f44888d57fda1260bf013c4bbe264c2cf1a3cac087f0f0fdfe5c6ef0e2694232' src/partners.mjs \
+            '4abb5a757d330eca583cba02e078375c6406fd0420924fd2ba27c215a44afa5d' src/support-chat.mjs \
+            'b8967d2a10be62709136af556e275b0afa9d3316f7a45d7aa9a818ab508150bd' public/index.html \
+            'c6372ebf0e9b9f87dc318f186f486ec9e23aa4997ff490322c19eea12370788b' public/app.js \
+            '11e8d72d96b8d7acfb80d413d73e78a7322183e819d5ee89a80299ad9fb94472' public/app.css \
+            'f2b66212f67326cbceaebbbf3c67ada5c3634c9cd2ee3b31fde011f044231058' public/assets/p2p.js \
+            '4c3190603f9a6fca35c7485e390054e8d77731988633f8614657043dba868b5b' public/assets/donat/shop.js \
+            '545446107883fda4c2d26ea082de5168660738430f2e0f9360d8b37d7764e3d0' migrations/0015_concurrent_exact_amounts.sql \
+            '317bc85da5285d8c562791697c14e46bc0c430c9a435656cce80883ba443c1dd' migrations/0016_support_chat.sql | sha256sum -c -
+          node - <<'JS'
+          const fs=require('node:fs');
+          const c=JSON.parse(fs.readFileSync('wrangler.production.jsonc','utf8'));
+          if(c.name!=='arslan-boost-bot'||c.account_id!=='b4cabfc322b7108c44aa96a7bae0010c'
+            ||c.d1_databases?.[0]?.database_name!=='arslan-boost-payments'
+            ||c.keep_vars!==true||Object.hasOwn(c.vars||{},'P2P_MODE'))
+              throw Error('Unsafe production config: abort');
+          const ui=fs.readFileSync('public/index.html','utf8');
+          if(!ui.includes('support-chat')||!ui.includes('settings'))throw Error('Missing expected chat tabs');
+          const code=fs.readFileSync('src/p2p.mjs','utf8');
+          if(!code.includes('const HOLD_SECONDS = 10 * 60;')
+            ||!code.includes('const TRANSFER_STEPS = [0];')
+            ||!code.includes('ambiguousInvoice'))throw Error('Bank safety change missing');
+          console.log('Source integrity, target and expected bank safeguards verified');
+          JS
+
+      - name: Apply reviewed professional patch and original user-supplied banner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,base64,lzma
+          source=Path('releases/pro-20261120.patch.xz64.txt')
+          data=lzma.decompress(base64.b64decode(''.join(source.read_text().split()),validate=True))
+          if hashlib.sha256(data).hexdigest()!='1080dd8ab93deca4335c03848b82ffd8e42d5e81c86bf83c274af1920d5b8516':
+              raise RuntimeError('Professional patch checksum mismatch')
+          Path('/tmp/pro.patch').write_bytes(data)
+          PY
+          cd release
+          git apply --check /tmp/pro.patch
+          git apply /tmp/pro.patch
+          git apply --check ../releases/pro-native-reply-safety.patch
+          git apply ../releases/pro-native-reply-safety.patch
+          cp ../releases/start-banner.jpg public/assets/start-banner.jpg
+          printf '%s  %s\n' \
+            '50b4c0bc5fcca570646d4dc7b64706466125fe9ff8cba86585fd76aa4deec8c5' src/worker.mjs \
+            '5a50be0a87d7e09990148e60998f5c9dd4f5c60088cf1225b621a3b40be447ce' src/p2p.mjs \
+            'dda7be94c99bba529f1601e6c0a0343066dfb361daf02c90ca77628bca5cb0de' src/support-chat.mjs \
+            '94bc03427e604627a551400372cedca12bf3151576c22d089963fd76bf3b6962' public/app.js \
+            '33491b4aadd7e1cbb2fc91dd6944d2b06b6243611dd98917ec0da3ac26325bdc' public/app.css \
+            'db6d8ef61f1e24870e4ac0344ea551535c3b56b82371f32ae3b17527be752639' public/assets/p2p.js \
+            'a348dd548dd0496ad3db25de0f3ac724776f5cdbf6f3fd82c55b27956132bb3c' public/assets/p2p.css \
+            '7e593a363272b759ffa3d2609fc82eedd65e8a237108d501be04382059f910ad' public/index.html \
+            'be651e28a5e070394594e4ba250294df243def3dd753537b116498cba0f11928' public/assets/start-banner.jpg \
+            '575d46e6bbd2bfc51582b285d498698e9885101901c67aa1166b0d61a52d39af' migrations/0017_support_dialogs.sql | sha256sum -c -
+          echo "PASS: exact audited source and owner's banner confirmed"
+
+      - name: Apply source-audited v2 patch with checksum
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,lzma,base64
+          from pathlib import Path
+          raw=base64.b64decode(''.join(Path('releases/pro-v2-20261120.patch.xz64.txt').read_text().split()),validate=True)
+          patch=lzma.decompress(raw)
+          if hashlib.sha256(patch).hexdigest()!='22752b152184fdde9d516ea4b23f04bdc16f9922ee1e164cf232fcc932c57ae3':
+              raise RuntimeError('Patch SHA256 does not match reviewed local tests')
+          Path('/tmp/pro-v2.patch').write_bytes(patch)
+          PY
+          cd release
+          git apply --check /tmp/pro-v2.patch
+          git apply /tmp/pro-v2.patch
+          printf '%s  %s\n' \
+            '5a50be0a87d7e09990148e60998f5c9dd4f5c60088cf1225b621a3b40be447ce' src/p2p.mjs \
+            'f44888d57fda1260bf013c4bbe264c2cf1a3cac087f0f0fdfe5c6ef0e2694232' src/partners.mjs \
+            '575d46e6bbd2bfc51582b285d498698e9885101901c67aa1166b0d61a52d39af' migrations/0017_support_dialogs.sql \
+            'be651e28a5e070394594e4ba250294df243def3dd753537b116498cba0f11928' public/assets/start-banner.jpg | sha256sum -c -
+          node - <<'JS'
+          const fs=require('fs');
+          const c=JSON.parse(fs.readFileSync('wrangler.production.jsonc'));
+          if(c.name!=='arslan-boost-bot'||c.account_id!=='b4cabfc322b7108c44aa96a7bae0010c'
+            ||c.d1_databases?.[0]?.database_name!=='arslan-boost-payments'
+            ||c.keep_vars!==true||Object.hasOwn(c.vars||{},'P2P_MODE')) throw Error('Wrong Cloudflare target');
+          if(!fs.readFileSync('src/worker.mjs','utf8').includes('case "support/reopen":'))throw Error('Reopen backend absent');
+          if(!fs.readFileSync('public/index.html','utf8').includes('20261120-pro-v2'))throw Error('New UI asset version absent');
+          console.log('PASS: no payment logic, credentials, DB schema or price changes');
+          JS
+      - name: Apply and verify payment-safe Telegram admin notice redesign
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import lzma,base64,hashlib
+          encoded=''.join(Path('releases/admin-notice-v3-20261120.patch.xz64.txt').read_text().split())
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True))
+          if hashlib.sha256(patch).hexdigest()!='4d45495bd7675c38c82e0c1587d4967ae6e12146b33c329451713b8ca5de96b9':
+              raise RuntimeError('Reviewed admin patch checksum mismatch')
+          Path('/tmp/admin-v3.patch').write_bytes(patch)
+          PY
+          cd release
+          printf '%s  %s\\n' \
+            '7f3ccef2471de049524ebdc6f5f78a1e3432acd2b22f8b60825f114362fe414d' src/worker.mjs \
+            '5a50be0a87d7e09990148e60998f5c9dd4f5c60088cf1225b621a3b40be447ce' src/p2p.mjs \
+            '66bb2dcbed80beaa9b3390c99628edf077590dd32184c23ae235d4705fcbe223' src/support-chat.mjs \
+            'b85f1ca1df9c68616d39df9ba4e818eb6f7bb458566aeba56a3ea43650cd929c' tests/p2p.test.mjs | sha256sum -c -
+          git apply --check /tmp/admin-v3.patch
+          git apply /tmp/admin-v3.patch
+          printf '%s  %s\\n' \
+            '94c59e327532f1f75931d764f60d263efba85229c8fe9bf74c2b238c8c278ced' src/worker.mjs \
+            'd03c894fa2e5384de36e2ef63ecad25ae5b7b9d5a667368abe48a3582d9b387f' src/p2p.mjs \
+            'da5b4cffe05a1816e531d4a636184c436a5cde6f51fe4305144f4d3f0e092730' src/support-chat.mjs \
+            '995dba70936043ea4ba4704478d0e84d632c5363bd0c886d9c280c31b318c73d' tests/p2p.test.mjs | sha256sum -c -
+          node --check src/p2p.mjs
+          node --check src/worker.mjs
+          node --check src/support-chat.mjs
+          node - <<'JS'
+          const fs=require('fs');
+          const p=fs.readFileSync('src/p2p.mjs','utf8'),w=fs.readFileSync('src/worker.mjs','utf8');
+          if(!p.includes('const HOLD_SECONDS = 10 * 60;')||!p.includes('const TRANSFER_STEPS = [0];'))
+            throw Error('No-surcharge 10-minute bank safety missing');
+          if(!w.includes('audit:confirm:')||!p.includes('formatAdminInvoiceCard'))
+            throw Error('Admin confirmation workflow missing');
+          console.log('Verified production identity, bank safety, real admin callbacks and source hashes');
+          JS
+
+      - name: Check syntax and entire local regression suite
+        working-directory: release
+        run: |
+          set -euo pipefail
+          find public src -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          npm test > /tmp/admin-v3-test-results.txt 2>&1
+          cat /tmp/admin-v3-test-results.txt | tail -20
+          grep -q '^# pass 73      - name: Check live production baseline before touching Cloudflare
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          mkdir -p /tmp/live-assets/donat
+          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
+            curl -fsSL --retry 2 --max-time 25 "$URL/$f?v=pro-v2-preflight" > "/tmp/live-$f"
+          done
+          printf '%s  %s\n' \
+            '334e97b5f9525cb3fdef58512737014ca637a955790b6c2dd0b3945e5ceab2d1' /tmp/live-index.html \
+            '408b2aac0d838d52d2c4797031aff4b044c3ea8e75dc42c161a1b3c40a310f43' /tmp/live-app.js \
+            '652e9e067a2edfb93a25daaeb23b2a83ecc165c698a29f16255b9146453d21cd' /tmp/live-app.css \
+            '478464e37e420eef143e7a756501a3834642345445ed3142c6dc89082aef15ba' /tmp/live-assets/p2p.js \
+            'f82f4fe036cd5d06b8f7eeb58eacc655ada88152e84d0f028fd492a646a26d64' /tmp/live-assets/donat/shop.css | sha256sum -c -
+          status="$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 15 -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
+          [[ "$status" = 401 || "$status" = 403 ]] || { echo '::error::Admin API unexpectedly public'; exit 1; }
+      - name: Check private payment mode and latest D1 migration (read-only)
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/settings.json
+          node - <<'JS'
+          const j=require('/tmp/settings.json'),b=j.result?.bindings||[];
+          if(!j.success||!b.some(x=>x.name==='P2P_MODE'&&x.text==='private'))throw Error('Private payment mode changed');
+          for(const k of ['ADMIN_ID','P2P_CARDS','P2P_CARDXABAR_SECRET','P2P_HUMO_SECRET'])
+            if(!b.some(x=>x.name===k))throw Error('Missing payment secret '+k);
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > /tmp/d1-ledger.json
+          node - <<'JS'
+          const x=require('/tmp/d1-ledger.json');
+          if(x.flatMap(r=>r.results||[])[0]?.name!=='0017_support_dialogs.sql')throw Error('DB schema mismatch');
+          JS
+      - name: Deploy tested source with unchanged D1 and secrets
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo 'Published verified Telegram admin card redesign without payment schema changes'
+      - name: Verify actual live asset hashes and health
+        working-directory: release
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
+            expected="$(sha256sum "public/$f" | cut -d' ' -f1)"
+            matched=0
+            for n in {1..12}; do
+              if curl -fsSL --max-time 20 "$URL/$f?v=20261120-admin-v3" > /tmp/v2-current; then
+                [[ "$(sha256sum /tmp/v2-current | cut -d' ' -f1)" = "$expected" ]] && { matched=1; break; }
+              fi
+              sleep 3
+            done
+            [[ "$matched" = 1 ]] || { echo "::error::Live asset mismatch: $f"; exit 1; }
+          done
+          curl -fsSL --max-time 20 "$URL/healthz" > /tmp/v2-health.json
+          node - <<'JS'
+          const j=require('/tmp/v2-health.json');
+          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production health check failed');
+          console.log('Professional admin notifications deployed, health green. No actual bank transfer tested.');
+          JS
+ /tmp/admin-v3-test-results.txt
+          grep -q '^# fail 0      - name: Check live production baseline before touching Cloudflare
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          mkdir -p /tmp/live-assets/donat
+          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
+            curl -fsSL --retry 2 --max-time 25 "$URL/$f?v=pro-v2-preflight" > "/tmp/live-$f"
+          done
+          printf '%s  %s\n' \
+            '334e97b5f9525cb3fdef58512737014ca637a955790b6c2dd0b3945e5ceab2d1' /tmp/live-index.html \
+            '408b2aac0d838d52d2c4797031aff4b044c3ea8e75dc42c161a1b3c40a310f43' /tmp/live-app.js \
+            '652e9e067a2edfb93a25daaeb23b2a83ecc165c698a29f16255b9146453d21cd' /tmp/live-app.css \
+            '478464e37e420eef143e7a756501a3834642345445ed3142c6dc89082aef15ba' /tmp/live-assets/p2p.js \
+            'f82f4fe036cd5d06b8f7eeb58eacc655ada88152e84d0f028fd492a646a26d64' /tmp/live-assets/donat/shop.css | sha256sum -c -
+          status="$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 15 -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
+          [[ "$status" = 401 || "$status" = 403 ]] || { echo '::error::Admin API unexpectedly public'; exit 1; }
+      - name: Check private payment mode and latest D1 migration (read-only)
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/settings.json
+          node - <<'JS'
+          const j=require('/tmp/settings.json'),b=j.result?.bindings||[];
+          if(!j.success||!b.some(x=>x.name==='P2P_MODE'&&x.text==='private'))throw Error('Private payment mode changed');
+          for(const k of ['ADMIN_ID','P2P_CARDS','P2P_CARDXABAR_SECRET','P2P_HUMO_SECRET'])
+            if(!b.some(x=>x.name===k))throw Error('Missing payment secret '+k);
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > /tmp/d1-ledger.json
+          node - <<'JS'
+          const x=require('/tmp/d1-ledger.json');
+          if(x.flatMap(r=>r.results||[])[0]?.name!=='0017_support_dialogs.sql')throw Error('DB schema mismatch');
+          JS
+      - name: Deploy tested source with unchanged D1 and secrets
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo 'Published verified Telegram admin card redesign without payment schema changes'
+      - name: Verify actual live asset hashes and health
+        working-directory: release
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
+            expected="$(sha256sum "public/$f" | cut -d' ' -f1)"
+            matched=0
+            for n in {1..12}; do
+              if curl -fsSL --max-time 20 "$URL/$f?v=20261120-admin-v3" > /tmp/v2-current; then
+                [[ "$(sha256sum /tmp/v2-current | cut -d' ' -f1)" = "$expected" ]] && { matched=1; break; }
+              fi
+              sleep 3
+            done
+            [[ "$matched" = 1 ]] || { echo "::error::Live asset mismatch: $f"; exit 1; }
+          done
+          curl -fsSL --max-time 20 "$URL/healthz" > /tmp/v2-health.json
+          node - <<'JS'
+          const j=require('/tmp/v2-health.json');
+          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production health check failed');
+          console.log('Professional admin notifications deployed, health green. No actual bank transfer tested.');
+          JS
+ /tmp/admin-v3-test-results.txt
+          grep -q '^# skipped 26      - name: Check live production baseline before touching Cloudflare
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          mkdir -p /tmp/live-assets/donat
+          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
+            curl -fsSL --retry 2 --max-time 25 "$URL/$f?v=pro-v2-preflight" > "/tmp/live-$f"
+          done
+          printf '%s  %s\n' \
+            '334e97b5f9525cb3fdef58512737014ca637a955790b6c2dd0b3945e5ceab2d1' /tmp/live-index.html \
+            '408b2aac0d838d52d2c4797031aff4b044c3ea8e75dc42c161a1b3c40a310f43' /tmp/live-app.js \
+            '652e9e067a2edfb93a25daaeb23b2a83ecc165c698a29f16255b9146453d21cd' /tmp/live-app.css \
+            '478464e37e420eef143e7a756501a3834642345445ed3142c6dc89082aef15ba' /tmp/live-assets/p2p.js \
+            'f82f4fe036cd5d06b8f7eeb58eacc655ada88152e84d0f028fd492a646a26d64' /tmp/live-assets/donat/shop.css | sha256sum -c -
+          status="$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 15 -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
+          [[ "$status" = 401 || "$status" = 403 ]] || { echo '::error::Admin API unexpectedly public'; exit 1; }
+      - name: Check private payment mode and latest D1 migration (read-only)
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/settings.json
+          node - <<'JS'
+          const j=require('/tmp/settings.json'),b=j.result?.bindings||[];
+          if(!j.success||!b.some(x=>x.name==='P2P_MODE'&&x.text==='private'))throw Error('Private payment mode changed');
+          for(const k of ['ADMIN_ID','P2P_CARDS','P2P_CARDXABAR_SECRET','P2P_HUMO_SECRET'])
+            if(!b.some(x=>x.name===k))throw Error('Missing payment secret '+k);
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > /tmp/d1-ledger.json
+          node - <<'JS'
+          const x=require('/tmp/d1-ledger.json');
+          if(x.flatMap(r=>r.results||[])[0]?.name!=='0017_support_dialogs.sql')throw Error('DB schema mismatch');
+          JS
+      - name: Deploy tested source with unchanged D1 and secrets
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo 'Published verified Telegram admin card redesign without payment schema changes'
+      - name: Verify actual live asset hashes and health
+        working-directory: release
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
+            expected="$(sha256sum "public/$f" | cut -d' ' -f1)"
+            matched=0
+            for n in {1..12}; do
+              if curl -fsSL --max-time 20 "$URL/$f?v=20261120-admin-v3" > /tmp/v2-current; then
+                [[ "$(sha256sum /tmp/v2-current | cut -d' ' -f1)" = "$expected" ]] && { matched=1; break; }
+              fi
+              sleep 3
+            done
+            [[ "$matched" = 1 ]] || { echo "::error::Live asset mismatch: $f"; exit 1; }
+          done
+          curl -fsSL --max-time 20 "$URL/healthz" > /tmp/v2-health.json
+          node - <<'JS'
+          const j=require('/tmp/v2-health.json');
+          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production health check failed');
+          console.log('Professional admin notifications deployed, health green. No actual bank transfer tested.');
+          JS
+ /tmp/admin-v3-test-results.txt
+      - name: Check live production baseline before touching Cloudflare
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          mkdir -p /tmp/live-assets/donat
+          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
+            curl -fsSL --retry 2 --max-time 25 "$URL/$f?v=pro-v2-preflight" > "/tmp/live-$f"
+          done
+          printf '%s  %s\n' \
+            '334e97b5f9525cb3fdef58512737014ca637a955790b6c2dd0b3945e5ceab2d1' /tmp/live-index.html \
+            '408b2aac0d838d52d2c4797031aff4b044c3ea8e75dc42c161a1b3c40a310f43' /tmp/live-app.js \
+            '652e9e067a2edfb93a25daaeb23b2a83ecc165c698a29f16255b9146453d21cd' /tmp/live-app.css \
+            '478464e37e420eef143e7a756501a3834642345445ed3142c6dc89082aef15ba' /tmp/live-assets/p2p.js \
+            'f82f4fe036cd5d06b8f7eeb58eacc655ada88152e84d0f028fd492a646a26d64' /tmp/live-assets/donat/shop.css | sha256sum -c -
+          status="$(curl -sS -o /tmp/protected -w '%{http_code}' --max-time 15 -H 'Content-Type: application/json' -d '{}' "$URL/api/support/inbox")"
+          [[ "$status" = 401 || "$status" = 403 ]] || { echo '::error::Admin API unexpectedly public'; exit 1; }
+      - name: Check private payment mode and latest D1 migration (read-only)
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/settings.json
+          node - <<'JS'
+          const j=require('/tmp/settings.json'),b=j.result?.bindings||[];
+          if(!j.success||!b.some(x=>x.name==='P2P_MODE'&&x.text==='private'))throw Error('Private payment mode changed');
+          for(const k of ['ADMIN_ID','P2P_CARDS','P2P_CARDXABAR_SECRET','P2P_HUMO_SECRET'])
+            if(!b.some(x=>x.name===k))throw Error('Missing payment secret '+k);
+          JS
+          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
+            --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > /tmp/d1-ledger.json
+          node - <<'JS'
+          const x=require('/tmp/d1-ledger.json');
+          if(x.flatMap(r=>r.results||[])[0]?.name!=='0017_support_dialogs.sql')throw Error('DB schema mismatch');
+          JS
+      - name: Deploy tested source with unchanged D1 and secrets
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
+          echo 'Published verified Telegram admin card redesign without payment schema changes'
+      - name: Verify actual live asset hashes and health
+        working-directory: release
+        run: |
+          set -euo pipefail
+          URL='https://arslan-boost-bot.zenin7210.workers.dev'
+          for f in index.html app.js app.css assets/p2p.js assets/donat/shop.css; do
+            expected="$(sha256sum "public/$f" | cut -d' ' -f1)"
+            matched=0
+            for n in {1..12}; do
+              if curl -fsSL --max-time 20 "$URL/$f?v=20261120-admin-v3" > /tmp/v2-current; then
+                [[ "$(sha256sum /tmp/v2-current | cut -d' ' -f1)" = "$expected" ]] && { matched=1; break; }
+              fi
+              sleep 3
+            done
+            [[ "$matched" = 1 ]] || { echo "::error::Live asset mismatch: $f"; exit 1; }
+          done
+          curl -fsSL --max-time 20 "$URL/healthz" > /tmp/v2-health.json
+          node - <<'JS'
+          const j=require('/tmp/v2-health.json');
+          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production health check failed');
+          console.log('Professional admin notifications deployed, health green. No actual bank transfer tested.');
+          JS
