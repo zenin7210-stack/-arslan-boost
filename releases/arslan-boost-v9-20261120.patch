@@ -1,0 +1,1079 @@
+diff --git a/migrations/0019_v9_lease_and_amounts.sql b/migrations/0019_v9_lease_and_amounts.sql
+new file mode 100644
+index 0000000..33d81ef
+--- /dev/null
++++ b/migrations/0019_v9_lease_and_amounts.sql
+@@ -0,0 +1,20 @@
++-- V9: Non-destructive lease shortening. The old expires_at CHECK
++-- (expires_at=created_at+600) remains intact for historical invoices.
++-- Old invoices have NULL lease_expires_at and keep the V8 deadline.
++ALTER TABLE invoices ADD COLUMN lease_expires_at INTEGER
++  CHECK (lease_expires_at IS NULL OR lease_expires_at <= expires_at);
++CREATE INDEX IF NOT EXISTS p2p_v9_lease_lookup
++  ON invoices(card_id, unique_amount, lease_expires_at);
++-- Two concurrent purchases cannot reserve the same card + amount while the
++-- previous invoice is active or within the 10-minute late-notice quarantine.
++-- IGNORE keeps the transaction free of false payment/order records.
++CREATE TRIGGER IF NOT EXISTS p2p_v9_reservation_collision
++BEFORE INSERT ON invoices
++WHEN EXISTS (
++  SELECT 1 FROM invoices previous
++  WHERE previous.card_id = NEW.card_id AND previous.unique_amount = NEW.unique_amount
++    AND COALESCE(previous.cancelled_at, previous.lease_expires_at, previous.expires_at) + 600 > NEW.created_at
++)
++BEGIN
++  SELECT RAISE(IGNORE);
++END;
+diff --git a/public/app.js b/public/app.js
+index 3f192f5..0d24c68 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -536,10 +536,12 @@
+       const stamp=Date.parse(item.created_at);
+       const date=Number.isFinite(stamp) ? new Intl.DateTimeFormat(state.lang==='ru'?'ru-RU':'uz-UZ',
+         {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(stamp)) : '';
++      const bankMethod = cardMethods.includes(item.method || item.card);
+       const status=item.status==='expired'
+-        ? (state.lang==='ru'?'Время оплаты истекло':'To‘lov muddati tugagan')
++        ? (state.lang==='ru'?'Не оплачено':'To‘lanmadi')
+         : item.status==='cancelled'
+-          ? (state.lang==='ru'?'Отменено':'Bekor qilingan')
++          ? bankMethod ? (state.lang==='ru'?'Не оплачено · закрыто':'To‘lanmadi · yopilgan')
++            : (state.lang==='ru'?'Отменено':'Bekor qilingan')
+           : item.kind==='boost'&&item.status==='paid'
+             ? t('historyOrderPaidWaiting') : statusName(item.status);
+       const statusGroup=group(item);
+diff --git a/public/assets/p2p.js b/public/assets/p2p.js
+index 6d9c9d4..121f0f1 100644
+--- a/public/assets/p2p.js
++++ b/public/assets/p2p.js
+@@ -7,14 +7,14 @@
+       copy: 'Копировать', selectCopy: 'Выделите и скопируйте текст', exact: 'Точная сумма перевода',
+       card: 'Карта получателя', methodNote: 'Перевод на карту',
+       expires: 'Время для перевода', rules1: 'Не меняйте сумму ни на 1 сум.',
+-      rules2: 'Оплатите в течение 10 минут.', transfer: 'Я оплатил', checking: 'Проверяем платёж',
++      rules2: 'Оплатите в течение 7 минут.', transfer: 'Я оплатил', checking: 'Проверяем платёж',
+       checkingNote: 'Администратор проверяет фактическое поступление на карту.',
+       checkingAuto: 'Ожидаем подтверждение поступления от банковского источника. Повторно не переводите.',
+       waitingAuto: 'Ожидаем банковское подтверждение. Если деньги уже отправлены, не платите повторно.',
+       manualReview: 'Ожидает подтверждения администратора',
+       manualWait: 'После проверки вы получите уведомление в Telegram. Чек не обязателен.',
+       paid: 'Баланс пополнен', orderPaid: 'Заказ оплачен', order: 'Заказ', toOrders: 'К заказам',
+-      expired: 'Время перевода истекло', expiredAdvice: 'Не переводите деньги по этой заявке. Если перевод уже выполнен, дождитесь проверки или обратитесь в поддержку.',
++      expired: 'Оплата не подтверждена', expiredAdvice: 'Не переводите деньги по этой заявке. Если перевод уже выполнен, дождитесь проверки или обратитесь в поддержку.',
+       rejected: 'Заявка отклонена', cancelled: 'Заявка отменена',
+       cancel: 'Отменить до оплаты', cancelTitle: 'Деньги ещё не отправлены?',
+       cancelNote: 'Нельзя отменять заявку, если вы уже перевели деньги. После отмены старую сумму оплачивать нельзя.',
+@@ -25,17 +25,17 @@
+       retry: 'Проверить ещё раз', new: 'К сумме и способу оплаты',
+       help: 'Сумма, которую зачислим', unavailable: 'Способ временно недоступен.',
+       error: 'Не удалось обновить данные. Попробуйте ещё раз.',
+-      amountUnavailable: 'Создать счёт не удалось. Повторите попытку; цена товара не увеличится.',
++      amountUnavailable: 'Нет свободной суммы. Попробуйте другую карту или повторите позже.',
+       inProgress: 'Сначала завершите текущий перевод.',
+       noCard: 'Реквизиты изменились. Если вы уже перевели деньги, откройте проверку.',
+       history: 'Последняя заявка', noExtra: 'Переведите ровно указанную сумму', loading: 'Загружаем способы оплаты…',
+       quote: 'Предварительная сумма перевода', quoteBadge: 'Точная сумма закрепится после продолжения',
+       quoteLoading:'Подбираем свободную сумму…', quoteUnavailable:'Сейчас нет свободной суммы. Попробуйте позже.',
+       quoteChanged:'Эта сумма занята. Для вас подобрана сумма:',
+-      quoteHint:'Точная сумма не повышается. Если она занята, выберите другой способ оплаты или повторите позже.',
++      quoteHint:'Если сумма занята, перевод может отличаться на +100 или −100 сум. Точная сумма указана перед оплатой.',
+       creditedAll:'На баланс будет зачислено',
+       retryLoading:'Повторить загрузку', accessDenied:'Оплата картой сейчас недоступна для этого аккаунта.',
+-      reusedReview:'Есть одновременно открытые заявки на ту же сумму. Нужна проверка банка. Не платите повторно.', errorCode:'Код ошибки', orderTransferDifference:'Цена заказа: {price}. Сумма перевода выше на {extra} для определения платежа. Отмените заявку до перевода, если не согласны.',
++      reusedReview:'Есть одновременно открытые заявки на ту же сумму. Нужна проверка банка. Не платите повторно.', errorCode:'Код ошибки', orderTransferDifference:'Цена товара: {price}. Для определения перевода доплата {extra}. Переведите точно указанную сумму.', orderTransferDiscount:'Цена товара: {price}. Скидка на перевод {discount}. Переведите точно указанную сумму.',
+     },
+     uz: {
+       wallet: 'Karta orqali to‘ldirish', balance: 'O‘tkazmalar balansi', amount: 'To‘ldirish summasi',
+@@ -43,14 +43,14 @@
+       copy: 'Nusxalash', selectCopy: 'Matnni belgilab nusxalang', exact: 'O‘tkaziladigan aniq summa',
+       card: 'Qabul qiluvchi karta', methodNote: 'Kartaga o‘tkazma',
+       expires: 'O‘tkazma uchun vaqt', rules1: 'Summani 1 so‘mga ham o‘zgartirmang.',
+-      rules2: '10 daqiqa ichida to‘lang.', transfer: 'To‘ladim', checking: 'To‘lov tekshirilmoqda',
++      rules2: '7 daqiqa ichida to‘lang.', transfer: 'To‘ladim', checking: 'To‘lov tekshirilmoqda',
+       checkingNote: 'Administrator kartaga pul tushganini tekshiradi.',
+       checkingAuto: 'Bank xabari orqali tushum tasdig‘ini kutyapmiz. Pulni qayta yubormang.',
+       waitingAuto: 'Bank tasdig‘i kutilmoqda. Pul jo‘natgan bo‘lsangiz, qayta to‘lamang.',
+       manualReview: 'Administrator tasdig‘i kutilmoqda',
+       manualWait: 'Tekshiruvdan keyin Telegram orqali xabar olasiz. Chek majburiy emas.',
+       paid: 'Balans to‘ldirildi', orderPaid: 'Buyurtma to‘landi', order: 'Buyurtma', toOrders: 'Buyurtmalarga qaytish',
+-      expired: 'O‘tkazma vaqti tugadi', expiredAdvice: 'Bu ariza bo‘yicha pul yubormang. Pul yuborgan bo‘lsangiz, tekshiruvni kuting yoki yordam xizmatiga yozing.',
++      expired: 'To‘lov tasdiqlanmadi', expiredAdvice: 'Bu ariza bo‘yicha pul yubormang. Pul yuborgan bo‘lsangiz, tekshiruvni kuting yoki yordam xizmatiga yozing.',
+       rejected: 'Ariza rad etildi', cancelled: 'Ariza bekor qilindi',
+       cancel: 'To‘lovdan oldin bekor qilish', cancelTitle: 'Pul hali yuborilmadimi?',
+       cancelNote: 'Pul o‘tkazgan bo‘lsangiz bekor qilmang. Bekor qilingan arizaning summasiga pul yubormang.',
+@@ -61,17 +61,17 @@
+       retry: 'Qayta tekshirish', new: 'Summa va usulga qaytish',
+       help: 'Balansga tushadigan summa', unavailable: 'Usul vaqtincha mavjud emas.',
+       error: 'Ma’lumot yangilanmadi. Qayta urinib ko‘ring.',
+-      amountUnavailable: 'Hisob yaratilmadi. Qayta urinib ko‘ring; narx oshmaydi.',
++      amountUnavailable: 'Bo‘sh summa yo‘q. Boshqa kartani tanlang yoki keyin urinib ko‘ring.',
+       inProgress: 'Avval joriy o‘tkazmani yakunlang.',
+       noCard: 'Rekvizitlar o‘zgargan. Pul yuborgan bo‘lsangiz, tekshiruvni oching.',
+       history: 'So‘nggi ariza', noExtra: 'Faqat ko‘rsatilgan summani o‘tkazing', loading: 'To‘lov usullari yuklanmoqda…',
+       quote: 'Taxminiy o‘tkazma summasi', quoteBadge: 'Davom etganda summa biriktiriladi',
+       quoteLoading:'Bo‘sh summa tanlanmoqda…', quoteUnavailable:'Hozir bo‘sh summa yo‘q. Keyinroq urinib ko‘ring.',
+       quoteChanged:'Bu summa band. Siz uchun yangi summa:',
+-      quoteHint:'Narx oshmaydi. Summa band bo‘lsa, boshqa usulni tanlang yoki keyinroq urinib ko‘ring.',
++      quoteHint:'Summa band bo‘lsa, to‘lov +100 yoki −100 so‘m farq qilishi mumkin. Aniq summa ekranda ko‘rsatiladi.',
+       creditedAll:'Balansga tushadigan summa',
+       retryLoading:'Qayta yuklash', accessDenied:'Karta orqali to‘lov ushbu akkaunt uchun hozircha mavjud emas.',
+-      reusedReview:'Bir vaqtda bir xil summali to‘lovlar bor. Xavfsizlik uchun bank orqali tekshiriladi. Pulni qayta yubormang.', errorCode:'Xato kodi', orderTransferDifference:'Buyurtma narxi: {price}. To‘lovni aniqlash uchun o‘tkazma {extra} ga ko‘proq. Rozi bo‘lmasangiz, pul yuborishdan oldin arizani bekor qiling.',
++      reusedReview:'Bir vaqtda bir xil summali to‘lovlar bor. Xavfsizlik uchun bank orqali tekshiriladi. Pulni qayta yubormang.', errorCode:'Xato kodi', orderTransferDifference:'Mahsulot narxi: {price}. O‘tkazmani aniqlash uchun +{extra}. Faqat ko‘rsatilgan summani yuboring.', orderTransferDiscount:'Mahsulot narxi: {price}. O‘tkazmaga {discount} chegirma. Faqat ko‘rsatilgan summani yuboring.',
+     },
+   };
+ 
+@@ -293,11 +293,11 @@
+         ${invoice.orderId ? `<p class="p2p-muted">${e(t('order'))} #${e(invoice.orderId)}</p>` : ''}
+         ${invoice.reviewReason==='reused_amount' ? '<p class="p2p-muted" role="status">'+e(t('reusedReview'))+'</p>' : ''}
+         ${invoice.purpose==='order' && invoice.baseAmount !== invoice.uniqueAmount
+-          ? `<p class="p2p-muted">${e(t('orderTransferDifference').replace('{price}',money(invoice.baseAmount)).replace('{extra}',money(invoice.uniqueAmount-invoice.baseAmount)))}</p>`
++          ? `<p class="p2p-muted">${e((invoice.uniqueAmount > invoice.baseAmount ? t('orderTransferDifference') : t('orderTransferDiscount')).replace('{price}',money(invoice.baseAmount)).replace('{extra}',money(invoice.uniqueAmount-invoice.baseAmount)).replace('{discount}',money(invoice.baseAmount-invoice.uniqueAmount)))}</p>`
+           : invoice.purpose==='topup' && invoice.baseAmount !== invoice.uniqueAmount
+             ? `<p class="p2p-muted">${e(t('creditedAll'))}: ${e(money(invoice.uniqueAmount))}</p>` : ''}
+-        <div class="p2p-progress"><div><span>${e(t('expires'))}</span><time id="p2p-clock">10:00</time></div>
+-          <progress id="p2p-progress" max="600" value="600" aria-label="${e(t('expires'))}"></progress></div>
++        <div class="p2p-progress"><div><span>${e(t('expires'))}</span><time id="p2p-clock">7:00</time></div>
++          <progress id="p2p-progress" max="420" value="420" aria-label="${e(t('expires'))}"></progress></div>
+         ${card ? `<div class="p2p-card">
+           <span class="p2p-card-label">${e(t('card'))}</span>
+           <strong>${e(card.replace(/(.{4})(?=.)/g, '$1 '))}</strong>
+@@ -442,7 +442,7 @@
+ 
+     function renderCheck() {
+       if (!deadline && invoice.checkedAt) {
+-        deadline = Date.now() + Math.max(0, invoice.checkedAt + 60 - invoice.serverTime) * 1000;
++        deadline = Date.now() + Math.max(0, Math.min(invoice.expiresAt, invoice.checkedAt + 60) - invoice.serverTime) * 1000;
+       }
+       const order = invoice.purpose === 'order';
+       const paid = invoice.status === 'paid';
+@@ -470,12 +470,12 @@
+           <p class="p2p-muted">${e(detail)}</p>
+         </div>
+         <p class="p2p-feedback" role="status"></p>
+-        ${['pending','expired'].includes(invoice.status) && !running ?
++        ${invoice.status === 'pending' && !running ?
+           `<button type="button" class="p2p-action" id="p2p-retry">${e(t('retry'))}</button>` : ''}
+         <button type="button" class="secondary" id="p2p-return">${e(t(backLabel))}</button>`,
+       invoice.method.toUpperCase());
+       const retry = within('#p2p-retry');
+-      if (retry) retry.onclick = () => invoice.status === 'expired' || invoice.checkedAt ? refresh(version) : startCheck(version);
++      if (retry) retry.onclick = () => invoice.checkedAt ? refresh(version) : startCheck(version);
+       within('#p2p-return').onclick = order && paid ? ui.orders
+         : order || ['pending', 'manual_check'].includes(invoice.status) ? returnTo : open;
+       if (running) {
+diff --git a/public/index.html b/public/index.html
+index 5302a5f..398d06c 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -27,7 +27,7 @@
+     @media(min-width:520px){.app{padding-left:20px;padding-right:20px}.hero{height:205px}.mode{height:91px}}
+   </style>
+   <link rel="stylesheet" href="app.css?v=20261120-pro-v2">
+-  <link rel="stylesheet" href="assets/p2p.css?v=20261120-professional-v1">
++  <link rel="stylesheet" href="assets/p2p.css?v=20261120-v9">
+   <link rel="stylesheet" href="assets/donat/shop.css?v=20261120-pro-v2">
+ </head>
+ <body>
+@@ -210,6 +210,6 @@
+   <button type="button" id="keyboard-done" class="keyboard-done" data-i18n="keyboardDone" tabindex="-1" hidden>Tayyor</button>
+   <div class="intro" id="intro" aria-hidden="true"><div class="intro-content"><img class="intro-emblem" src="assets/intro-emblem.webp" width="1280" height="1280" alt="" decoding="async" fetchpriority="high"><div class="intro-brand">ARSLAN BOOST</div><div class="intro-game">STANDOFF <span>2</span></div><p class="intro-subtitle" data-i18n="introSubtitle">Rank oshirish xizmati</p></div></div>
+   <script src="assets/donat/shop.js?v=20261120-partner10-v1"></script>
+-  <script src="assets/p2p.js?v=20261120-pro-v2"></script>
+-  <script src="app.js?v=20261120-history-v8"></script>
++  <script src="assets/p2p.js?v=20261120-v9"></script>
++  <script src="app.js?v=20261120-v9"></script>
+ </body></html>
+diff --git a/src/p2p.mjs b/src/p2p.mjs
+index 8071a1d..b716a6d 100644
+--- a/src/p2p.mjs
++++ b/src/p2p.mjs
+@@ -5,12 +5,14 @@ import { orderTables } from "./store.mjs";
+ import { matchesSecret, telegram, telegramId, username, validSecret } from "./telegram.mjs";
+ 
+ const now = () => Math.floor(Date.now() / 1000);
+-// Displayed payment is valid for 10 minutes, with no additional reservation after expiry.
+-// Reused/overlapping amounts require manual reconciliation. Older bank notices remain eligible for audit.
+-const HOLD_SECONDS = 10 * 60;
++// Bank invoice: 7 minutes, or at most 60 seconds after the FIRST paid claim.
++// Incoming authenticated bank events confirm even if the customer never presses paid.
++const HOLD_SECONDS = 7 * 60;
++const CHECK_SECONDS = 60;
++const AFTER_CLOSE_MONITOR_SECONDS = 10 * 60;
+ const BANK_LOOKBACK_SECONDS = 24 * 60 * 60;
+-// Matching is based on authenticated bank event time within each 10-minute lease.
+-// Historic same-price invoices are not "reserved" for another 24 hours.
++// Event correlation uses bank event time. Never reuse a card+amount while a
++// recently closed invoice may still have a delayed bank notification.
+ const MIN_AMOUNT = 10000;
+ const METHOD = /^(humo|uzcard)$/;
+ const CARD_ID = /^[a-z0-9_-]{2,32}$/;
+@@ -93,26 +95,26 @@ export async function p2pMethods(store, env) {
+ 
+ function expirePending(store, at) {
+   return store.stmt(`UPDATE invoices SET status = 'expired'
+-    WHERE status = 'pending' AND expires_at <= ? AND checked_at IS NULL`, at);
++    WHERE status = 'pending' AND COALESCE(lease_expires_at,expires_at) <= ? AND checked_at IS NULL`, at);
+ }
+ 
+ export async function expireInvoices(store, at = now(), closeReviewed = true) {
+   await store.db.batch([
+     expirePending(store, at),
+     store.stmt(`UPDATE invoices SET status = 'expired' WHERE status = 'pending'
+-      AND expires_at <= ? AND (checked_at IS NULL OR ? = 1) AND NOT EXISTS (
++      AND COALESCE(lease_expires_at,expires_at) <= ? AND (checked_at IS NULL OR ? = 1) AND NOT EXISTS (
+       SELECT 1 FROM p2p_incoming incoming WHERE incoming.invoice_id = invoices.id)`, at, Number(closeReviewed)),
+     store.stmt(`UPDATE payments SET status = 'cancelled'
+       WHERE status = 'pending' AND method IN ('uzcard','humo') AND EXISTS (
+         SELECT 1 FROM invoices i WHERE i.order_payment_id = payments.id
+-        AND i.expires_at <= ? AND (i.checked_at IS NULL OR ? = 1) AND i.status = 'expired'
++        AND COALESCE(i.lease_expires_at,i.expires_at) <= ? AND (i.checked_at IS NULL OR ? = 1) AND i.status = 'expired'
+         AND NOT EXISTS (SELECT 1 FROM p2p_incoming incoming WHERE incoming.invoice_id = i.id)
+         AND NOT EXISTS (SELECT 1 FROM p2p_incoming bank_evidence
+           WHERE bank_evidence.invoice_id IS NULL
+             AND bank_evidence.card_id = i.card_id
+             AND bank_evidence.amount = i.unique_amount
+             AND bank_evidence.occurred_at >= i.created_at - 59
+-            AND bank_evidence.occurred_at < i.expires_at))`, at, Number(closeReviewed)),
++            AND bank_evidence.occurred_at < COALESCE(i.lease_expires_at,i.expires_at)))`, at, Number(closeReviewed)),
+     store.stmt(`UPDATE orders SET status = 'cancelled' WHERE status = 'pending'
+       AND EXISTS(SELECT 1 FROM payments p WHERE p.order_id = orders.id AND p.status = 'cancelled')`),
+     store.stmt(`UPDATE donat_orders SET status = 'cancelled' WHERE status = 'pending'
+@@ -129,16 +131,16 @@ function publicInvoice(env, row) {
+   const awaiting = row.status === "pending" || row.status === "manual_check";
+   const status = row.status === "rejected" && row.cancelled_at != null ? "cancelled"
+     : awaiting ? (row.checked_at && env.P2P_MODE === "manual" ? "manual_check"
+-    : row.expires_at <= time ? "expired" : "pending") : row.status;
++    : Math.min(row.lease_expires_at ?? row.expires_at, row.expires_at) <= time ? "expired" : "pending") : row.status;
+   const card = status === "pending" ? cards(env).find(item => item.id === row.card_id &&
+     item.number.endsWith(row.card_number)) : null;
+   return {
+     id: row.id, baseAmount: row.requested_amount ?? row.base_amount, uniqueAmount: row.unique_amount,
+     method: row.payment_method, status, verificationMode: env.P2P_MODE === 'private' ? 'automatic' : 'manual',
+-    createdAt: row.created_at, expiresAt: row.expires_at,
++    createdAt: row.created_at, expiresAt: row.lease_expires_at ?? row.expires_at,
+     purpose: row.order_payment_id === null ? "topup" : "order",
+     serverTime: time, checkedAt: row.checked_at,
+-    canCancel: status === "pending" && row.checked_at == null && row.expires_at > time,
++    canCancel: status === "pending" && row.checked_at == null && (row.lease_expires_at ?? row.expires_at) > time,
+     ...(card ? { cardNumber: card.number, cardHolder: row.card_holder } : {}),
+   };
+ }
+@@ -148,9 +150,9 @@ async function ambiguousInvoice(store, row) {
+   // transfer to be incorrectly credited to a newer identical invoice.
+   const other = await store.first(`SELECT id FROM invoices
+     WHERE card_id = ? AND unique_amount = ? AND id <> ?
+-      AND created_at < ? AND expires_at > ? LIMIT 1`,
++      AND created_at < ? AND COALESCE(lease_expires_at,expires_at) > ? LIMIT 1`,
+     row.card_id, row.unique_amount, row.id,
+-    row.expires_at, row.created_at);
++    row.lease_expires_at ?? row.expires_at, row.created_at);
+   return Boolean(other);
+ }
+ 
+@@ -162,11 +164,11 @@ async function invoiceState(store, env, row) {
+     // The bank-payment lease ends at 10 minutes. An expired unpaid attempt
+     // never remains under active review just because an amount was reused.
+     if (row.checked_at != null &&
+-        ((row.status === 'pending' && row.expires_at > now()) ||
++        ((row.status === 'pending' && (row.lease_expires_at ?? row.expires_at) > now()) ||
+         (row.status === 'expired' && await store.first(`SELECT id FROM p2p_incoming
+           WHERE invoice_id IS NULL AND card_id=? AND amount=?
+           AND occurred_at >= ? AND occurred_at < ? LIMIT 1`,
+-          row.card_id,row.unique_amount,row.created_at-59,row.expires_at)))) {
++          row.card_id,row.unique_amount,row.created_at-59,row.lease_expires_at ?? row.expires_at)))) {
+       invoice.status = 'manual_check';
+       invoice.canCancel = false;
+     }
+@@ -184,14 +186,11 @@ async function invoiceState(store, env, row) {
+   return { ...invoice, balance: account?.p2p_balance ?? 0 };
+ }
+ 
+-// Each reserved transfer has an exact, collision-free amount. For a busy
+-// bank transfer amount, try +100, +200, ... instead of rejecting the order.
+-// Never try a smaller amount: that would underpay the advertised order price.
+-const TRANSFER_STEPS = [0]; // Never raise the advertised price
++// At most three payment sums. Prefer exact price, then +100, then -100.
++// The +/-100 adjustment is displayed to the customer before transfer.
++const TRANSFER_STEPS = [0, 100, -100];
+ function transferAmountQuery(cardsForMethod, amount, time, order) {
+-  // D1 has a stricter compound-SELECT limit than local SQLite. A series of
+-  // UNION ALL statements throws SQLITE_ERROR in production; JSON1 uses one
+-  // virtual table and preserves the same ordered candidate amounts.
++  // Avoid D1's compound-SELECT limit; JSON1 gives an ordinal priority.
+   const deltaSql = `json_each('${JSON.stringify(TRANSFER_STEPS)}')`;
+   const cardJson = JSON.stringify(Object.fromEntries(cardsForMethod.map(card=>[card.id,{
+     last4:card.number.slice(-4), holder:card.holder, enabled:Number(card.enabled)
+@@ -207,9 +206,17 @@ function transferAmountQuery(cardsForMethod, amount, time, order) {
+         LEFT JOIN p2p_card_flags flag ON flag.card_id = config.key
+         WHERE COALESCE(flag.enabled, json_extract(config.value, '$.enabled')) = 1
+       ) AS available CROSS JOIN ${deltaSql} AS steps
+-      WHERE ? + steps.value <= ?
+-      ORDER BY steps.value ASC, available.last_used ASC, available.card_id ASC LIMIT 1`,
+-    params: [amount, cardJson, amount, MAX_AMOUNT]
++      WHERE (? + steps.value) BETWEEN 1 AND ?
++        AND NOT EXISTS (
++          SELECT 1 FROM invoices used
++          WHERE used.card_id = available.card_id
++            AND used.unique_amount = (? + steps.value)
++            AND COALESCE(used.cancelled_at, used.lease_expires_at, used.expires_at) + ? > ?
++        )
++      ORDER BY CAST(steps.key AS INTEGER) ASC,
++        available.last_used ASC, available.card_id ASC LIMIT 1`,
++    params: [amount, cardJson, amount, MAX_AMOUNT,
++      amount, AFTER_CLOSE_MONITOR_SECONDS, time]
+   };
+ }
+ function reserveInvoice(store, candidates, { userId, key, amount, method, time, lang, order }) {
+@@ -221,16 +228,16 @@ function reserveInvoice(store, candidates, { userId, key, amount, method, time,
+     WITH candidate AS (${query.sql})
+     INSERT INTO invoices (
+       user_id, request_id, base_amount, unique_amount, requested_amount, payment_method, card_id,
+-      card_number, card_holder, status, created_at, expires_at, lang
++      card_number, card_holder, status, created_at, expires_at, lease_expires_at, lang
+     )
+     SELECT ?, ?, candidate.exact_amount, candidate.exact_amount, ?, ?, candidate.card_id,
+-      candidate.last4, candidate.holder, 'pending', ?, ?, ?
++      candidate.last4, candidate.holder, 'pending', ?, ?, ?, ?
+     FROM candidate
+     WHERE NOT EXISTS (SELECT 1 FROM invoices WHERE user_id = ? AND status = 'pending')
+       AND NOT EXISTS (SELECT 1 FROM invoices WHERE user_id = ? AND request_id = ?)
+       ${newOrderOnly}
+     RETURNING *`,
+-    ...query.params, userId,key,amount,method,time,time+600,lang==='ru'?'ru':'uz',
++    ...query.params, userId,key,amount,method,time,time+600,time+HOLD_SECONDS,lang==='ru'?'ru':'uz',
+     userId,userId,key,...(order?[userId,order.key]:[]));
+ }
+ async function quoteInvoice(store, env, user, data) {
+@@ -239,7 +246,7 @@ async function quoteInvoice(store, env, user, data) {
+   // expiry process and again when a new invoice is actually created.
+   const method=data.method;
+   if(typeof method!=='string'||!METHOD.test(method))throw new RequestError('invalid_payment_method');
+-  const active=await store.first("SELECT * FROM invoices WHERE user_id=? AND status='pending' AND expires_at>?",user.id,now());
++  const active=await store.first("SELECT * FROM invoices WHERE user_id=? AND status='pending' AND COALESCE(lease_expires_at,expires_at)>?",user.id,now());
+   if(active)return {
+     baseAmount:active.requested_amount ?? active.base_amount,
+     uniqueAmount:active.unique_amount, method:active.payment_method,
+@@ -317,7 +324,7 @@ export async function createP2pOrder(store, env, user, kind, data) {
+         AND EXISTS (SELECT 1 FROM invoices other
+           WHERE other.id = ? AND other.id <> i.id
+             AND other.card_id = i.card_id AND other.unique_amount = i.unique_amount
+-            AND other.created_at < i.expires_at AND other.expires_at > i.created_at)
++            AND other.created_at < COALESCE(i.lease_expires_at,i.expires_at) AND COALESCE(other.lease_expires_at,other.expires_at) > i.created_at)
+       ON CONFLICT DO NOTHING`, result.invoice.id).run();
+   }
+   return result;
+@@ -330,7 +337,7 @@ async function cancelUnpaidInvoice(store, env, userId, invoiceId) {
+   const results = await store.db.batch([
+     store.stmt(`UPDATE invoices SET status = 'rejected', cancelled_at = ?
+       WHERE id = ? AND user_id = ? AND status = 'pending'
+-        AND checked_at IS NULL AND expires_at > ?
++        AND checked_at IS NULL AND COALESCE(lease_expires_at,expires_at) > ?
+         AND NOT EXISTS(SELECT 1 FROM p2p_incoming incoming WHERE incoming.invoice_id = invoices.id)
+       RETURNING id`, time, invoiceId, userId, time),
+     store.stmt(`INSERT INTO p2p_invoice_cancellations(invoice_id,user_id,reason,cancelled_at)
+@@ -361,7 +368,7 @@ export async function p2pApi(request, env, store, user, data, path, enqueueRevie
+     // Emergency read-only recovery works even when options/quote fails.
+     // Never mark money paid or cancel an invoice automatically.
+     const current = await store.first(`
+-      SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?
++      SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND COALESCE(lease_expires_at,expires_at) > ?
+       ORDER BY id DESC LIMIT 1`, user.id, now());
+     return { active: current ? await invoiceState(store, env, current) : null };
+   }
+@@ -373,7 +380,7 @@ export async function p2pApi(request, env, store, user, data, path, enqueueRevie
+     try {
+       const at = now();
+       const current = await store.first(`
+-        SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?`,
++        SELECT * FROM invoices WHERE user_id = ? AND status = 'pending' AND COALESCE(lease_expires_at,expires_at) > ?`,
+         user.id, at);
+       // An unpaid BOOST/DONAT bank invoice may also block wallet top-ups.
+       // Show it so its owner can cancel it explicitly before sending money.
+@@ -411,8 +418,14 @@ export async function p2pApi(request, env, store, user, data, path, enqueueRevie
+   if (match[2] === "cancel") return cancelUnpaidInvoice(store, env, user.id, id);
+   if (match[2] === "check") {
+     await store.stmt(`
+-      UPDATE invoices SET checked_at = COALESCE(checked_at, ?)
+-      WHERE id = ? AND user_id = ? AND status IN ('pending', 'expired', 'manual_check')`, now(), id, user.id).run();
++      UPDATE invoices
++      SET checked_at = COALESCE(checked_at, ?),
++          lease_expires_at = CASE
++            WHEN checked_at IS NULL AND ? = 'private'
++             THEN MIN(COALESCE(lease_expires_at, expires_at), ? + ?)
++            ELSE lease_expires_at END
++      WHERE id = ? AND user_id = ? AND status = 'pending' AND COALESCE(lease_expires_at,expires_at) > ?`,
++      now(), env.P2P_MODE, now(), CHECK_SECONDS, id, user.id, now()).run();
+     const rowToReview = await ownedInvoice(store, id, user.id);
+     if (rowToReview && (env.P2P_MODE === 'manual' ||
+       (env.P2P_MODE === 'private' && await ambiguousInvoice(store, rowToReview)))) {
+@@ -499,7 +512,7 @@ export async function receiveIncoming(store, env, method, data) {
+     INSERT INTO p2p_incoming (card_id, source, source_event_id, bank_ref, amount, occurred_at, received_at, invoice_id)
+     SELECT ?, ?, ?, ?, ?, ?, ?,
+       (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(id) END FROM invoices
+-       WHERE card_id = ? AND unique_amount = ? AND created_at <= ? AND expires_at > ?
++       WHERE card_id = ? AND unique_amount = ? AND created_at <= ? AND COALESCE(lease_expires_at,expires_at) > ?
+          AND status IN ('pending', 'expired', 'manual_check')
+          AND (order_payment_id IS NULL OR EXISTS (
+            SELECT 1 FROM payments p WHERE p.id = invoices.order_payment_id AND p.status = 'pending'))
+@@ -508,8 +521,8 @@ export async function receiveIncoming(store, env, method, data) {
+            WHERE collision.card_id = invoices.card_id
+              AND collision.unique_amount = invoices.unique_amount
+              AND collision.id <> invoices.id
+-             AND collision.created_at < invoices.expires_at
+-             AND collision.expires_at > invoices.created_at))
++             AND collision.created_at < COALESCE(invoices.lease_expires_at,invoices.expires_at)
++             AND COALESCE(collision.lease_expires_at,collision.expires_at) > invoices.created_at))
+     ON CONFLICT DO NOTHING RETURNING invoice_id`,
+     card.id, method, eventId, notice.bankRef, notice.amount, minimum, received, card.id, notice.amount,
+     minimum, maximum, card.id, notice.bankRef);
+@@ -643,7 +656,7 @@ async function adminBankNotice(env, chatId, text, buttons) {
+   });
+ }
+ export function formatAdminInvoiceCard(row, collision) {
+-  const expired = Number(row.expires_at) <= now();
++  const expired = Number(row.lease_expires_at ?? row.expires_at) <= now();
+   return [
+     collision ? `⚠️ <b>СВЕРКА ПЕРЕВОДА · #${row.id}</b>` : `💳 <b>ПРОВЕРКА ОПЛАТЫ · #${row.id}</b>`,
+     '',
+@@ -696,7 +709,7 @@ export async function linkVerifiedIncoming(store, env, adminId, invoiceId, bankE
+     AND card_id=? AND amount=?`,bankEventId,row.card_id,row.unique_amount);
+   // A verified bank event can be up to minute-resolution. Admin must independently
+   // correlate the payer/order; we will not auto-guess the recipient.
+-  if (!event || event.occurred_at < row.created_at - 59 || event.occurred_at >= row.expires_at)
++  if (!event || event.occurred_at < row.created_at - 59 || event.occurred_at >= (row.lease_expires_at ?? row.expires_at))
+     throw new RequestError('p2p_bank_event_mismatch',409);
+   if (row.order_payment_id !== null) {
+     const pay = await store.first('SELECT status FROM payments WHERE id=?',row.order_payment_id);
+@@ -803,7 +816,7 @@ export async function p2pCommand(env, store, config, message, command, args) {
+ // Unmatched bank transfers that arrive <=10min after closure are surfaced to
+ // the admin alongside plausible orders. No guessing and no automatic credit.
+ function formatUnmatchedAlert(record) {
+-  const candidates = record.lateCandidates || [];
++  const candidates = [...(record.lateCandidates || []), ...(record.activeCandidates || [])];
+   const amount = formatAmount(record.amount);
+   const method = safeHtml(record.source);
+   const card = safeHtml(record.card_id);
+@@ -811,16 +824,17 @@ function formatUnmatchedAlert(record) {
+     const possibilities = candidates.map(row => {
+       const name = row.donat_order_id != null ? 'DONAT #' + row.donat_order_id
+         : row.order_id != null ? 'BOOST #' + row.order_id : 'Счёт #' + row.id;
+-      const afterMinutes = Math.max(0, Math.ceil((record.received_at - row.closed_at) / 60));
++      const isClosed = row.closed_at != null;
++      const afterMinutes = isClosed ? Math.max(0, Math.ceil((record.received_at - row.closed_at) / 60)) : 0;
+       return '• ' + safeHtml(name) + ' · invoice #' + row.id +
+         ' · <a href="tg://user?id=' + row.user_id + '">Клиент</a>' +
+-        ' · ' + afterMinutes + ' мин после закрытия';
++        (isClosed ? ' · ' + afterMinutes + ' мин после закрытия' : ' · заявка на проверке');
+     }).join('\n');
+-    return '⏰ <b>ПОЗДНИЙ БАНКОВСКИЙ ПЕРЕВОД · событие #' + record.id + '</b>\n\n' +
++    return (record.lateCandidates?.length ? '⏰ <b>ПОЗДНИЙ ПЕРЕВОД' : '⚠️ <b>СПОРНЫЙ ПЕРЕВОД') + ' · событие #' + record.id + '</b>\n\n' +
+       '💰 <b>' + amount + ' UZS</b>\n' +
+       '💳 Карта: <code>' + card + '</code> · ' + method + '\n\n' +
+-      '<b>Возможные закрытые заявки:</b>\n' + possibilities + '\n\n' +
+-      'Поступление замечено в течение 10 минут после закрытия. ' +
++      '<b>Возможные заявки:</b>\n' + possibilities + '\n\n' +
++      (record.lateCandidates?.length ? 'Перевод замечен после закрытия. ' : 'Найден неоднозначный активный счёт. ') +
+       '<b>Сверьте сумму, время и отправителя в банке.</b> ' +
+       'Нельзя автоматически зачислять или выполнять заказ только по совпадению суммы.';
+   }
+@@ -849,21 +863,33 @@ async function alertP2pDisputes(store, env) {
+   // ONLY in the admin message. They are not settlement evidence by themselves.
+   for (const incoming of unmatched) {
+     incoming.lateCandidates = await store.all(
+-      "\nSELECT i.id, i.user_id, i.order_payment_id, i.payment_method, i.card_number,\n       p.order_id, p.donat_order_id, COALESCE(i.cancelled_at, i.expires_at) AS closed_at\nFROM invoices i\nLEFT JOIN payments p ON p.id = i.order_payment_id\nWHERE i.card_id = ? AND i.unique_amount = ?\n  AND i.status IN ('expired','rejected')\n  AND ? >= COALESCE(i.cancelled_at, i.expires_at)\n  AND ? < COALESCE(i.cancelled_at, i.expires_at) + 600\n  AND ? >= i.created_at - 59\n  AND ? < COALESCE(i.cancelled_at, i.expires_at) + 600\nORDER BY i.id DESC LIMIT 5\n",
++      "\nSELECT i.id, i.user_id, i.order_payment_id, i.payment_method, i.card_number,\n       p.order_id, p.donat_order_id, COALESCE(i.cancelled_at, i.lease_expires_at, i.expires_at) AS closed_at\nFROM invoices i\nLEFT JOIN payments p ON p.id = i.order_payment_id\nWHERE i.card_id = ? AND i.unique_amount = ?\n  AND i.status IN ('expired','rejected')\n  AND ? >= COALESCE(i.cancelled_at, i.lease_expires_at, i.expires_at)\n  AND ? < COALESCE(i.cancelled_at, i.lease_expires_at, i.expires_at) + 600\n  AND ? >= i.created_at - 59\n  AND ? < COALESCE(i.cancelled_at, i.lease_expires_at, i.expires_at) + 600\nORDER BY i.id DESC LIMIT 5\n",
+       incoming.card_id, incoming.amount, incoming.received_at, incoming.received_at,
+       incoming.occurred_at, incoming.occurred_at);
+-  }
+-
+-  for (const record of [
+-    ...checked.map(r => ({...r,kind:'invoice'})),
+-    ...unmatched.map(r => ({...r,kind:'incoming'})),
+-  ]) {
++    incoming.activeCandidates = await store.all(`
++      SELECT i.id, i.user_id, i.order_payment_id, i.created_at, i.expires_at,
++        p.order_id, p.donat_order_id
++      FROM invoices i LEFT JOIN payments p ON p.id = i.order_payment_id
++      WHERE i.card_id = ? AND i.unique_amount = ?
++        AND i.status IN ('pending','expired','manual_check')
++        AND ? >= i.created_at - 59 AND ? < COALESCE(i.lease_expires_at,i.expires_at)
++        AND (i.status = 'pending' OR ? < COALESCE(i.lease_expires_at,i.expires_at) + 600)
++      ORDER BY i.id DESC LIMIT 5`,
++      incoming.card_id, incoming.amount, incoming.occurred_at, incoming.occurred_at,
++      incoming.received_at);
++  }
++
++  // Never notify admins about ordinary P2P transfers sent by friends.
++  // Checked-but-unpaid customer claims are visible in order history and do not
++  // trigger an admin bank alert without an actual ambiguous incoming event.
++  const relevantUnmatched = unmatched.filter(r => (r.lateCandidates?.length || r.activeCandidates?.length));
++  for (const record of relevantUnmatched.map(r => ({ ...r, kind: 'incoming' }))) {
+     const text = record.kind === 'invoice'
+       ? `⚠️ <b>ОПЛАТА НЕ ПОДТВЕРЖДЕНА · #${record.id}</b>\n\n`+
+         `💰 <b>${formatAmount(record.amount)} UZS</b>\n`+
+         `💳 ${safeHtml(record.method.toUpperCase())} ·•••• ${safeHtml(record.last4)}\n`+
+         `👤 <a href="tg://user?id=${record.user_id}">Клиент</a> · <code>${record.user_id}</code>\n\n`+
+-        `10 минут прошли. Если клиент перевёл деньги, проверьте банковское поступление и отправителя. `+
++        `Срок оплаты истёк. Если клиент перевёл деньги, проверьте банковское поступление и отправителя. `+
+         `<b>Не зачисляйте по кнопке клиента или чеку.</b>`
+       : formatUnmatchedAlert(record);
+     for (const admin of admins) {
+@@ -880,9 +906,10 @@ async function alertP2pDisputes(store, env) {
+         if(record.kind==='invoice') {
+           buttons.push([{text:'💬 Написать клиенту',callback_data:`support:contact:${record.user_id}`}]);
+         }
+-        if(record.kind === 'incoming' && record.lateCandidates?.length === 1) {
++        const candidates = [...(record.lateCandidates || []), ...(record.activeCandidates || [])];
++        if(record.kind === 'incoming' && candidates.length === 1) {
+           buttons.push([{text:'💬 Написать клиенту',
+-            callback_data:'support:contact:' + record.lateCandidates[0].user_id}]);
++            callback_data:'support:contact:' + candidates[0].user_id}]);
+         }
+         await adminBankNotice(env,admin,text,buttons);
+         await store.stmt(`UPDATE p2p_review_alerts SET delivered_at=?,lease_until=0
+@@ -902,7 +929,7 @@ export async function p2pCron(store, env) {
+       AND NOT EXISTS (SELECT 1 FROM p2p_incoming b WHERE b.invoice_id=i.id)
+       AND NOT EXISTS (SELECT 1 FROM p2p_incoming b WHERE b.invoice_id IS NULL
+         AND b.card_id=i.card_id AND b.amount=i.unique_amount
+-        AND b.occurred_at >= i.created_at-59 AND b.occurred_at < i.expires_at))`).run();
++        AND b.occurred_at >= i.created_at-59 AND b.occurred_at < COALESCE(i.lease_expires_at,i.expires_at)))`).run();
+   if (env.P2P_MODE === 'private') await alertP2pDisputes(store, env);
+   const queue = await store.all("SELECT invoice_id FROM p2p_notices WHERE lease_until <= ? ORDER BY lease_until LIMIT 6", now());
+   await Promise.allSettled(queue.map(row => sendP2pNotice(store, env, row.invoice_id)));
+diff --git a/src/partners.mjs b/src/partners.mjs
+index a4c5a89..800abf5 100644
+--- a/src/partners.mjs
++++ b/src/partners.mjs
+@@ -99,10 +99,16 @@ export async function partnerCallback(env, store, config, query) {
+ 
+ export async function fulfillOrder(store, kind, id, cost) {
+   if (!["boost", "donat"].includes(kind)) throw new RequestError("invalid_kind");
+-  const { table } = orderTables[kind === "boost" ? "order" : "donat"];
++  const { table, column } = orderTables[kind === "boost" ? "order" : "donat"];
++  // The order keeps its catalog price. P2P settlements may carry a disclosed
++  // +100 or -100 transfer adjustment; partner earnings use received revenue.
++  const actualRevenue = `COALESCE((SELECT invoice.unique_amount
++    FROM invoices invoice JOIN payments bank_payment ON bank_payment.id=invoice.order_payment_id
++    WHERE bank_payment.${column}=o.id AND bank_payment.method IN ('uzcard','humo')
++      AND bank_payment.status='paid' AND invoice.status='paid' LIMIT 1),o.amount)`;
+   const [, order] = await store.db.batch([
+     store.stmt(`INSERT INTO partner_earnings(kind,order_id,partner,commission,available_at)
+-      SELECT ?,o.id,b.partner,CAST(MAX(0,o.amount-?)/10 AS INTEGER),?
++      SELECT ?,o.id,b.partner,CAST(MAX(0,${actualRevenue}-?)/10 AS INTEGER),?
+       FROM ${table} o JOIN partner_buyers b ON b.buyer=o.user_id
+       JOIN partners p ON p.user_id=b.partner AND p.status='approved'
+       WHERE o.id=? AND o.status IN ('paid','in_progress') AND b.joined_at<=o.created_at
+diff --git a/tests/approved-ui.test.mjs b/tests/approved-ui.test.mjs
+index 07148f0..c7e02af 100644
+--- a/tests/approved-ui.test.mjs
++++ b/tests/approved-ui.test.mjs
+@@ -65,11 +65,11 @@ test('All DONAT product sheets use visual viewport and keep Done button outside
+   assert.match(css,/body\.keyboard-open \.product-sheet \.widget-footer\{display:none!important\}/);
+   assert.match(css,/\.overlay\{top:var\(--visible-top/);
+ });
+-test('No transfer surcharge, ten-minute reservation and 24h bank notice audit',()=>{
+-  assert.match(p2p,/const TRANSFER_STEPS = \[0\]/);
+-  assert.match(p2p,/const HOLD_SECONDS = 10 \* 60/);
++test('Three explicit transfer options, seven-minute reservation and 24h bank audit',()=>{
++  assert.match(p2p,/const TRANSFER_STEPS = \[0, 100, -100\]/);
++  assert.match(p2p,/const HOLD_SECONDS = 7 \* 60/);
+   assert.match(p2p,/BANK_LOOKBACK_SECONDS = 24 \* 60 \* 60/);
+-  assert.match(p2p,/Historic same-price invoices are not/);
++  assert.match(p2p,/recently closed invoice/);
+   assert.match(p2p,/json_each/);
+   assert.match(store,/requested_amount = \?\)/);
+ });
+diff --git a/tests/chat-nav-and-partner.test.mjs b/tests/chat-nav-and-partner.test.mjs
+index 8ddbcf9..dc7054e 100644
+--- a/tests/chat-nav-and-partner.test.mjs
++++ b/tests/chat-nav-and-partner.test.mjs
+@@ -25,7 +25,8 @@ test('support route authenticated, private by user, with strict escaping and pol
+ });
+ test('new referral rate 10% of net profit, not of revenue',()=>{
+  const partners=f('src/partners.mjs'),shop=f('public/assets/donat/shop.js');
+- assert.match(partners,/CAST\(MAX\(0,o\.amount-\?\)\/10 AS INTEGER\)/);
++ assert.match(partners,/CAST\(MAX\(0,\$\{actualRevenue\}-\?\)\/10 AS INTEGER\)/);
++ assert.match(partners,/bank_payment\.status='paid'/);
+  assert.doesNotMatch(partners,/CAST\(MAX\(0,o\.amount-\?\)\/2 AS INTEGER\)/);
+  assert.match(shop,/partner-figure">10%<\/strong>/);
+ });
+diff --git a/tests/history-ui.test.mjs b/tests/history-ui.test.mjs
+index eaaec0f..e53ec7d 100644
+--- a/tests/history-ui.test.mjs
++++ b/tests/history-ui.test.mjs
+@@ -29,7 +29,7 @@ function prepare({orders=[],donatOrders=[],payments=[],filter='all',historyTab='
+   const tabs=['orders','payments'].map(k=>({dataset:{history:k},classList:{toggle(){}},
+     attributes:{},setAttribute(k,v){this.attributes[k]=v;}}));
+   const context={
+-    state, Date,Intl,Number,String,
++    state, Date,Intl,Number,String,cardMethods:['uzcard','humo'],
+     $:selector=>nodes.get(selector),
+     all:selector=>selector==='[data-history]'?tabs:selector==='#filters [data-history-filter]'?filters:[],
+     glyph:()=>'<svg class="glyph"></svg>',
+diff --git a/tests/p2p.test.mjs b/tests/p2p.test.mjs
+index 0b4e9b4..d012190 100644
+--- a/tests/p2p.test.mjs
++++ b/tests/p2p.test.mjs
+@@ -4,6 +4,8 @@ import { DatabaseSync } from "node:sqlite";
+ import { createHmac } from "node:crypto";
+ import { test } from "node:test";
+ import worker from "../src/worker.mjs";
++import { Store } from "../src/store.mjs";
++import { fulfillOrder } from "../src/partners.mjs";
+ import { parseIncoming } from "../src/p2p-notice.mjs";
+ 
+ function mockD1(beforeExactAmounts, beforeOrderGuard) {
+@@ -134,7 +136,7 @@ test.skip("creates exclusive invoices, authenticates status and relay, settles e
+   const first = await system.api(1, "invoice", form);
+   assert.equal(first.status, 200);
+   assert.equal(first.data.uniqueAmount, 50000);
+-  assert.equal(first.data.expiresAt - first.data.createdAt, 600);
++  assert.equal(first.data.expiresAt - first.data.createdAt, 420);
+   assert.equal(first.data.cardNumber, "0000000000000001");
+   const retry = await system.api(1, "invoice", form);
+   assert.equal(retry.data.id, first.data.id);
+@@ -359,22 +361,22 @@ test("authenticated UZCARD and HUMO notifications settle the linked orders witho
+   const secondBuyer = await system.api(2, "donat/create", {...donat,requestId:'second-user-same-price'});
+   assert.equal(secondBuyer.status,200,JSON.stringify(secondBuyer.data));
+   assert.equal((await system.api(2, "donat/state")).data.orders.length, 1);
+-  assert.equal((await system.api(2, `invoice/${secondBuyer.data.invoiceId}/status`,null,'GET')).data.verificationMode,'manual');
++  assert.equal((await system.api(2, `invoice/${secondBuyer.data.invoiceId}/status`,null,'GET')).data.verificationMode,'automatic');
++  assert.equal(system.db.prepare('SELECT unique_amount FROM invoices WHERE id=?').get(secondBuyer.data.invoiceId).unique_amount,22090);
+ 
+   const first = `invoice/${placed.data.invoiceId}`;
+   assert.equal((await system.api(2, first + "/check")).status, 404);
+   const checked = (await system.api(1, first + "/check")).data;
+-  assert.deepEqual([checked.status, checked.purpose, checked.orderId], ["manual_check", "order", placed.data.id]);
++  assert.deepEqual([checked.status, checked.purpose, checked.orderId], ["pending", "order", placed.data.id]);
+   assert.equal((await system.api(1, "donat/create", { ...donat, paymentMethod: "balance" })).data.error, "invalid_payment_method");
+   const wrongAmount = { sender: "BankDemo", text: notification(21991, "BANKINCORRECT") };
+   assert.equal((await system.relay(wrongAmount)).data.matched, false);
+   const bank = { sender: "BankDemo", text: notification(21990, "BANKDONAT123") };
+-  assert.equal((await system.relay(bank)).data.matched, false);
++  assert.equal((await system.relay(bank)).data.matched, true);
+   assert.equal((await system.relay(bank)).data.duplicate, true);
+   const firstNotice = system.db.prepare("SELECT id FROM p2p_incoming WHERE bank_ref='BANKDONAT123'").get();
+   assert.ok(firstNotice);
+-  await system.webhook({message:{from:{id:40},chat:{id:40,type:'private'},
+-    text:`/p2p_link ${placed.data.invoiceId} ${firstNotice.id}`}});
++  assert.equal(system.db.prepare('SELECT invoice_id FROM p2p_incoming WHERE id=?').get(firstNotice.id).invoice_id,placed.data.invoiceId);
+   const paid = (await system.api(1, first + "/status", null, "GET")).data;
+   assert.equal(paid.status, "paid");
+   assert.equal((await system.api(1, "donat/state")).data.orders[0].status, "paid");
+@@ -981,8 +983,8 @@ test('30-minute unpaid order closure enables next order; late bank events stay u
+   assert.equal(first.status,200);
+   const id=first.data.invoiceId;
+   const old=Math.floor(Date.now()/1000)-1900;
+-  system.db.prepare('UPDATE invoices SET created_at=?,expires_at=? WHERE id=?')
+-    .run(old,old+600,id);
++  system.db.prepare('UPDATE invoices SET created_at=?,expires_at=?,lease_expires_at=? WHERE id=?')
++    .run(old,old+600,old+420,id);
+   await system.scheduled(); await system.drain();
+   assert.equal((await system.api(1,`invoice/${id}/status`,null,'GET')).data.status,'expired');
+   assert.equal((await system.api(1,'donat/state')).data.orders[0].status,'cancelled');
+@@ -996,10 +998,10 @@ test('30-minute unpaid order closure enables next order; late bank events stay u
+     requestId:'after-expire-new',paymentMethod:'humo'});
+   assert.equal(after.status,200);
+   await system.scheduled(); await system.drain();
+-  assert.equal(calls.filter(x=>x.chat_id===40&&x.text?.includes('НЕОПОЗНАННЫЙ ПЕРЕВОД')).length,1);
+-  assert.equal(calls.filter(x=>x.chat_id===41&&x.text?.includes('НЕОПОЗНАННЫЙ ПЕРЕВОД')).length,1);
++  assert.equal(calls.filter(x=>x.chat_id===40&&x.text?.includes('ПЕРЕВОД')).length,0);
++  assert.equal(calls.filter(x=>x.chat_id===41&&x.text?.includes('ПЕРЕВОД')).length,0);
+   await system.scheduled(); await system.drain();
+-  assert.equal(calls.filter(x=>x.chat_id===40&&x.text?.includes('НЕОПОЗНАННЫЙ ПЕРЕВОД')).length,1);
++  assert.equal(calls.filter(x=>x.chat_id===40&&x.text?.includes('ПЕРЕВОД')).length,0);
+ });
+ 
+ test('bank notice within ten minutes after order closes alerts admins with candidate but never credits',async t=>{
+@@ -1014,8 +1016,8 @@ test('bank notice within ten minutes after order closes alerts admins with candi
+   assert.equal(first.status,200);
+   const id=first.data.invoiceId;
+   const old=Math.floor(Date.now()/1000)-680;
+-  system.db.prepare('UPDATE invoices SET created_at=?,expires_at=? WHERE id=?')
+-    .run(old,old+600,id);
++  system.db.prepare('UPDATE invoices SET created_at=?,expires_at=?,lease_expires_at=? WHERE id=?')
++    .run(old,old+600,old+420,id);
+   await system.scheduled(); await system.drain();
+   assert.equal((await system.api(1,'invoice/'+id+'/status',null,'GET')).data.status,'expired');
+   const late=await system.relay({sender:'BankDemo',eventId:'sms:late-10min-notice',
+@@ -1024,13 +1026,13 @@ test('bank notice within ten minutes after order closes alerts admins with candi
+   assert.equal(late.data.matched,false);
+   await system.scheduled(); await system.drain();
+   const adminMessages=calls.filter(x=>(x.chat_id===40||x.chat_id===41)
+-    &&x.text?.includes('ПОЗДНИЙ БАНКОВСКИЙ ПЕРЕВОД'));
++    &&x.text?.includes('ПОЗДНИЙ ПЕРЕВОД'));
+   assert.equal(adminMessages.length,2);
+   assert.match(adminMessages[0].text,/Клиент/);
+   assert.match(adminMessages[0].text,/DONAT/);
+   assert.equal((await system.api(1,'state')).data.balance,0);
+   await system.scheduled(); await system.drain();
+-  assert.equal(calls.filter(x=>x.text?.includes('ПОЗДНИЙ БАНКОВСКИЙ ПЕРЕВОД')).length,2);
++  assert.equal(calls.filter(x=>x.text?.includes('ПОЗДНИЙ ПЕРЕВОД')).length,2);
+ });
+ 
+ test.skip('claiming paid without bank evidence triggers only a dispute alert, never credit',async t=>{
+@@ -1326,7 +1328,7 @@ test('D1 error while reading invoice options identifies failing stage',async()=>
+   const sys=app();
+   const prepare=sys.env.DB.prepare.bind(sys.env.DB);
+   sys.env.DB.prepare=sql=>{
+-    if(sql.includes("FROM invoices WHERE user_id = ? AND status = 'pending' AND expires_at > ?"))
++    if(sql.includes("FROM invoices WHERE user_id = ? AND status = 'pending' AND COALESCE(lease_expires_at,expires_at) > ?"))
+       throw new Error('Synthetic unavailable D1 in test only');
+     return prepare(sql);
+   };
+@@ -1386,37 +1388,23 @@ test('Existing confirmed P2P card order still creates a linked invoice without w
+   assert.equal(wallet.balance,0);
+ });
+ 
+-test('same 11 990 product on one card can be purchased simultaneously without surcharge',async t=>{
+-  const messages=[];
+-  t.mock.method(globalThis,'fetch',async(url,opts)=>{messages.push({url,body:JSON.parse(opts.body)});
+-    return Response.json({ok:true,result:{message_id:99}})});
++test('one card uses base then +100, authentic bank event settles without To‘ladim',async t=>{
+   const sys=app();
+   const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
+-  const one=await sys.api(1,'donat/create',{...data,requestId:'fixed-first'});
+-  assert.equal(one.status,200,JSON.stringify(one.data));
+-  const two=await sys.api(2,'donat/create',{...data,requestId:'fixed-second'});
+-  assert.equal(two.status,200,JSON.stringify(two.data));
+-  assert.notEqual(two.data.invoiceId,one.data.invoiceId);
+-  const invoices=sys.db.prepare('SELECT user_id,unique_amount,status FROM invoices ORDER BY user_id').all();
+-  assert.deepEqual(invoices.map(r=>r.unique_amount),[11990,11990]);
+-  assert.deepEqual(invoices.map(r=>r.status),['pending','pending']);
+-  assert.equal((await sys.api(1,'invoice/'+one.data.invoiceId+'/status',null,'GET')).data.verificationMode,'manual');
+-  assert.equal((await sys.api(2,'invoice/'+two.data.invoiceId+'/status',null,'GET')).data.verificationMode,'manual');
+-  await sys.api(1,'invoice/'+one.data.invoiceId+'/check',{});
+-  await sys.api(2,'invoice/'+two.data.invoiceId+'/check',{});
+-  await sys.drain();
+-  assert.equal(messages.filter(x=>x.body?.chat_id===40 && x.url.endsWith('sendMessage')).length,2);
+-  const late=await sys.relay({sender:'BankDemo',eventId:'sms:simultaneous11990',
+-    text:notification(11990,'BANKDUPE11990')});
+-  assert.equal(late.status,200);
+-  assert.equal(late.data.matched,false);
+-  assert.equal(sys.db.prepare('SELECT invoice_id FROM p2p_incoming WHERE bank_ref=?').get('BANKDUPE11990').invoice_id,null);
+-  assert.deepEqual(sys.db.prepare('SELECT status FROM payments ORDER BY id').all().map(x=>x.status),['pending','pending']);
++  const a=await sys.api(1,'donat/create',{...data,requestId:'fixed-first'});
++  const b=await sys.api(2,'donat/create',{...data,requestId:'fixed-second'});
++  assert.deepEqual([a.status,b.status],[200,200]);
++  assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices ORDER BY user_id').all().map(x=>x.unique_amount),[11990,12090]);
++  assert.equal((await sys.api(2,`invoice/${b.data.invoiceId}/status`,null,'GET')).data.verificationMode,'automatic');
++  const notice=await sys.relay({sender:'BankDemo',eventId:'sms:base-without-button',
++    text:notification(11990,'BANKBASEWITHOUT')});
++  assert.equal(notice.status,200);
++  assert.equal(notice.data.matched,true);
++  assert.deepEqual(sys.db.prepare('SELECT status FROM payments ORDER BY user_id').all().map(x=>x.status),['paid','pending']);
+   assert.equal((await sys.api(1,'state')).data.balance,0);
+-  assert.equal((await sys.api(2,'state')).data.balance,0);
+ });
+ 
+-test('new orders never reserve below listed price and can recover from a cancelled unpaid order',async()=>{
++test('cancelled orders release customer immediately, amount gets +100 quarantine',async()=>{
+   const system=app();
+   const payload={product:'spin_coins',option:'100',detail:'123456',expectedAmount:21990,
+     paymentMethod:'uzcard'};
+@@ -1429,8 +1417,8 @@ test('new orders never reserve below listed price and can recover from a cancell
+   const replacement=await system.api(1,'donat/create',{...payload,requestId:'order-after-blocked'});
+   assert.equal(replacement.status,200,JSON.stringify(replacement.data));
+   const invoice=system.db.prepare('SELECT * FROM invoices WHERE id=?').get(replacement.data.invoiceId);
+-  assert.equal(invoice.unique_amount,21990);
+-  assert.equal((await system.api(1,'invoice/'+invoice.id+'/status',null,'GET')).data.reviewReason,'reused_amount');
++  assert.equal(invoice.unique_amount,22090);
++  assert.equal((await system.api(1,'invoice/'+invoice.id+'/status',null,'GET')).data.verificationMode,'automatic');
+ });
+ 
+ test('Gold through market 100 checkout at 11990 creates actual linked card invoice',async()=>{
+@@ -1535,7 +1523,7 @@ test('20 minute quarantine releases an unpaid invoice but recycled amount never
+   assert.equal(first.status,200);
+   const firstId=first.data.invoiceId;
+   assert.equal(sys.db.prepare('SELECT expires_at-created_at AS seconds FROM invoices WHERE id=?').get(firstId).seconds,600);
+-  sys.db.prepare('UPDATE invoices SET created_at=created_at-1199,expires_at=expires_at-1199 WHERE id=?').run(firstId);
++  sys.db.prepare('UPDATE invoices SET created_at=created_at-1199,expires_at=expires_at-1199,lease_expires_at=lease_expires_at-1199 WHERE id=?').run(firstId);
+   const second=await sys.api(2,'donat/create',{...data,requestId:'reuse20-b'});
+   assert.equal(second.status,200,JSON.stringify(second.data));
+   const invoice=sys.db.prepare('SELECT * FROM invoices WHERE id=?').get(second.data.invoiceId);
+@@ -1559,11 +1547,11 @@ test('fresh payment after an expired exact-price order matches safely in its own
+   const old=first.data.invoiceId;
+   assert.equal(first.status,200,JSON.stringify(first.data));
+   assert.ok(old);
+-  sys.db.prepare('UPDATE invoices SET created_at=created_at-1200,expires_at=expires_at-1200 WHERE id=?').run(old);
++  sys.db.prepare('UPDATE invoices SET created_at=created_at-1200,expires_at=expires_at-1200,lease_expires_at=lease_expires_at-1200 WHERE id=?').run(old);
+   const second=await sys.api(2,'donat/create',{...data,requestId:'v7-time-second-order'});
+   assert.equal(second.status,200,JSON.stringify(second.data));
+   const next=second.data.invoiceId;
+-  sys.db.prepare('UPDATE invoices SET created_at=created_at-90,expires_at=expires_at-90 WHERE id=?').run(next);
++  sys.db.prepare('UPDATE invoices SET created_at=created_at-90,expires_at=expires_at-90,lease_expires_at=lease_expires_at-90 WHERE id=?').run(next);
+   assert.equal((await sys.api(2,'invoice/'+next+'/status',null,'GET')).data.verificationMode,'automatic');
+   const time=new Date(Date.now()-1500).toISOString();
+   const received=await sys.relay({sender:'BankDemo',eventId:'sms:v7fresh',text:notification(11990,'BANKV7FRESH',time)});
+@@ -1582,7 +1570,7 @@ test('checked invoice is closed after twenty minutes without false credit',async
+   const invoiceId=placed.data.invoiceId;
+   const marked=await sys.api(1,'invoice/'+invoiceId+'/check',{});
+   assert.equal(marked.status,200);
+-  sys.db.prepare('UPDATE invoices SET created_at=created_at-1201,expires_at=expires_at-1201,checked_at=checked_at-1201 WHERE id=?')
++  sys.db.prepare('UPDATE invoices SET created_at=created_at-1201,expires_at=expires_at-1201,lease_expires_at=lease_expires_at-1201,checked_at=checked_at-1201 WHERE id=?')
+     .run(invoiceId);
+   const second=await sys.api(2,'donat/create',{...data,requestId:'checked20-b'});
+   assert.equal(second.status,200,JSON.stringify(second.data));
+@@ -1604,6 +1592,8 @@ test('verified bank event may settle just one ambiguous invoice by authenticated
+   const a=await sys.api(1,'donat/create',{...form,requestId:'link-first-acc'});
+   const b=await sys.api(2,'donat/create',{...form,requestId:'link-second-acc'});
+   assert.equal(a.status,200);assert.equal(b.status,200);
++  // Simulate a historical V8 collision. V9 never issues such duplicate amounts.
++  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(1,`invoice/${a.data.invoiceId}/check`,{});
+   await sys.api(2,`invoice/${b.data.invoiceId}/check`,{});
+   await sys.drain();
+@@ -1634,6 +1624,7 @@ test('late ambiguous bank event after invoice expires remains eligible for authe
+   const form={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...form,requestId:'late-first-acc'});
+   const b=await sys.api(2,'donat/create',{...form,requestId:'late-second-acc'});
++  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(1,`invoice/${a.data.invoiceId}/check`,{});
+   await sys.drain();
+   // Bank notification arrived, but identity is ambiguous.
+@@ -1643,7 +1634,7 @@ test('late ambiguous bank event after invoice expires remains eligible for authe
+   const evtId=sys.db.prepare("SELECT id FROM p2p_incoming WHERE bank_ref='BANKLATE123'").get().id;
+   // Move entire invoice history forward by 21 minutes with the bank event
+   // still correctly tied to its actual time inside the original transfer window.
+-  sys.db.prepare('UPDATE invoices SET created_at=created_at-1261, expires_at=expires_at-1261,checked_at=checked_at-1261 WHERE id IN (?,?)')
++  sys.db.prepare('UPDATE invoices SET created_at=created_at-1261, expires_at=expires_at-1261,lease_expires_at=lease_expires_at-1261,checked_at=checked_at-1261 WHERE id IN (?,?)')
+     .run(a.data.invoiceId,b.data.invoiceId);
+   sys.db.prepare('UPDATE p2p_incoming SET occurred_at=occurred_at-1261,received_at=received_at-1261 WHERE id=?').run(evtId);
+   await sys.scheduled();
+@@ -1664,6 +1655,7 @@ test('only verified admin can reject an ambiguous bank claim without crediting m
+   const f={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...f,requestId:'reject-first-acc'});
+   const b=await sys.api(2,'donat/create',{...f,requestId:'reject-second-acc'});
++  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(2,`invoice/${b.data.invoiceId}/check`,{});
+   await sys.drain();
+   await sys.webhook({callback_query:{from:{id:3},id:'not-admin',data:`manual:reject:${b.data.invoiceId}`}});
+@@ -1699,7 +1691,7 @@ test('independent receiving cards can still auto-match equal prices without manu
+   assert.deepEqual(sys.db.prepare('SELECT status FROM payments ORDER BY user_id').all().map(x=>x.status),['paid','paid']);
+ });
+ 
+-test('ten-minute reservation expires without extra hold and does not auto-assign duplicate amounts', async t => {
++test('seven-minute reservation expires, but old amount stays quarantined for bank notifications', async t => {
+   t.mock.method(globalThis, 'fetch', async () => Response.json({ok:true,result:true}));
+   const sys=app();
+   const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
+@@ -1708,11 +1700,11 @@ test('ten-minute reservation expires without extra hold and does not auto-assign
+   assert.equal(a.status,200);
+   const row=sys.db.prepare('SELECT * FROM invoices WHERE id=?').get(a.data.invoiceId);
+   assert.equal(row.expires_at-row.created_at,600);
+-  sys.db.prepare('UPDATE invoices SET created_at=created_at-601,expires_at=expires_at-601 WHERE id=?')
++  sys.db.prepare('UPDATE invoices SET created_at=created_at-601,expires_at=expires_at-601,lease_expires_at=lease_expires_at-601 WHERE id=?')
+     .run(row.id);
+   const b=await sys.api(2,'donat/create',{...data,requestId:'ten-minute-test-b'});
+   assert.equal(b.status,200,JSON.stringify(b.data));
+-  assert.equal(sys.db.prepare('SELECT unique_amount FROM invoices WHERE id=?').get(b.data.invoiceId).unique_amount,11990);
++  assert.equal(sys.db.prepare('SELECT unique_amount FROM invoices WHERE id=?').get(b.data.invoiceId).unique_amount,12090);
+   const state=(await sys.api(2,`invoice/${b.data.invoiceId}/status`,null,'GET')).data;
+   assert.equal(state.verificationMode,'automatic');
+   await sys.drain();
+@@ -1941,6 +1933,8 @@ test('admin bank notification uses short HTML and safe actions instead of typed
+   const a=await sys.api(1,'donat/create',{...product,requestId:'bank-admin-a'});
+   const b=await sys.api(2,'donat/create',{...product,requestId:'bank-admin-b'});
+   assert.equal(a.status,200);assert.equal(b.status,200);
++  // Simulate a historical V8 collision. V9 never issues such duplicate amounts.
++  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(2,`invoice/${b.data.invoiceId}/check`,{});await sys.drain();
+   const m=messages.find(x=>x.method==='sendMessage'&&x.body.chat_id===40&&x.body.text?.includes('СВЕРКА ПЕРЕВОДА'));
+   assert.ok(m,'admin receives a short collision card');
+@@ -1966,6 +1960,7 @@ test('admin selects a verified unmatched bank event then confirms payment with s
+   const f={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...f,requestId:'bank-button-a'});
+   const b=await sys.api(2,'donat/create',{...f,requestId:'bank-button-b'});
++  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(1,`invoice/${a.data.invoiceId}/check`,{});await sys.drain();
+   const receipt=await sys.relay({sender:'BankDemo',eventId:'sms:button123',text:notification(11990,'BANKBUTTON123')});
+   assert.equal(receipt.data.matched,false);
+@@ -1995,6 +1990,7 @@ test('reject buttons ask admin to confirm; contacting client opens a reply sessi
+   const f={product:'spin_coins',option:'100',detail:'12345',expectedAmount:21990,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...f,requestId:'reject-button-a'});
+   const b=await sys.api(2,'donat/create',{...f,requestId:'reject-button-b'});
++  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(2,`invoice/${b.data.invoiceId}/check`,{});await sys.drain();
+   const callback=(data,who=40)=>sys.webhook({callback_query:{id:'action_'+data,from:{id:who},
+     message:{chat:{id:who,type:'private'},message_id:93},data}});
+@@ -2007,3 +2003,155 @@ test('reject buttons ask admin to confirm; contacting client opens a reply sessi
+   assert.equal(sys.db.prepare("SELECT COUNT(*) n FROM support_messages WHERE user_id=2 AND role='admin'").get().n,1);
+   assert.equal(sys.db.prepare('SELECT status FROM payments WHERE user_id=2').get().status,'pending');
+ });
++
++test('V9 amount order is original, +100, -100 and then unavailable, never +200',async()=>{
++  const sys=app({P2P_USERS:'1 2 3 4'});
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const requests=[];
++  for (const id of [1,2,3]) requests.push(await sys.api(id,'donat/create',{
++    ...data,requestId:'v9-three-'+id}));
++  assert.deepEqual(requests.map(r=>r.status),[200,200,200]);
++  assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices ORDER BY user_id').all().map(r=>r.unique_amount),
++    [11990,12090,11890]);
++  const fourth=await sys.api(4,'donat/create',{...data,requestId:'v9-fourth'});
++  assert.equal(fourth.status,409);
++  assert.match(fourth.data.error,/p2p_amount_unavailable|order_already_active/);
++  assert.equal(sys.db.prepare('SELECT COUNT(*) AS n FROM payments').get().n,3);
++});
++
++test('V9 first To‘ladim shortens lease to 60 seconds; repeats cannot renew it',async()=>{
++  const sys=app();
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const res=await sys.api(1,'donat/create',{...data,requestId:'v9-time-60'});
++  const id=res.data.invoiceId, first=sys.db.prepare('SELECT * FROM invoices WHERE id=?').get(id);
++  assert.equal(first.lease_expires_at-first.created_at,420);
++  const claimed=await sys.api(1,`invoice/${id}/check`,{});
++  assert.equal(claimed.status,200);
++  const second=sys.db.prepare('SELECT * FROM invoices WHERE id=?').get(id);
++  assert.ok(second.lease_expires_at-second.checked_at<=60);
++  assert.ok(second.lease_expires_at-second.checked_at>=59);
++  const repeat=await sys.api(1,`invoice/${id}/check`,{});
++  assert.equal(repeat.status,200);
++  const third=sys.db.prepare('SELECT * FROM invoices WHERE id=?').get(id);
++  assert.equal(third.lease_expires_at,second.lease_expires_at);
++  assert.equal(third.checked_at,second.checked_at);
++});
++
++test('V9 clicking in last 30 seconds never extends initial payment deadline',async()=>{
++  const sys=app();
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const res=await sys.api(1,'donat/create',{...data,requestId:'v9-last-30'});
++  const id=res.data.invoiceId;
++  sys.db.prepare('UPDATE invoices SET lease_expires_at=unixepoch()+30 WHERE id=?').run(id);
++  const before=sys.db.prepare('SELECT lease_expires_at FROM invoices WHERE id=?').get(id).lease_expires_at;
++  const checked=await sys.api(1,`invoice/${id}/check`,{});
++  assert.equal(checked.status,200);
++  const after=sys.db.prepare('SELECT lease_expires_at FROM invoices WHERE id=?').get(id).lease_expires_at;
++  assert.equal(after,before);
++});
++
++test('V9 unrelated incoming personal transfers are silently stored, never sent to admins',async t=>{
++  const calls=[];
++  t.mock.method(globalThis,'fetch',async(_url,opts)=>{
++    calls.push(JSON.parse(opts.body));return Response.json({ok:true,result:{message_id:100}});
++  });
++  const sys=app({ADMIN_ID_2:'41'});
++  const bank=await sys.relay({sender:'BankDemo',eventId:'sms:personal-transfer-1',
++    text:notification(17990,'BANKFRIENDPERSONAL')});
++  assert.equal(bank.status,200);
++  assert.equal(bank.data.matched,false);
++  await sys.scheduled();await sys.drain();
++  assert.equal(calls.filter(x=>x.chat_id===40||x.chat_id===41).length,0);
++  assert.equal(sys.db.prepare('SELECT COUNT(*) AS n FROM p2p_incoming').get().n,1);
++});
++
++test('V9 authentic incoming settles +100 and -100 separately, refunds no strangers, and computes real partner revenue',async()=>{
++  const sys=app();
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const a=await sys.api(1,'donat/create',{...data,requestId:'v9-profit-base'});
++  const b=await sys.api(2,'donat/create',{...data,requestId:'v9-profit-plus'});
++  const c=await sys.api(3,'donat/create',{...data,requestId:'v9-profit-minus'});
++  assert.deepEqual([a.status,b.status,c.status],[200,200,200]);
++  assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices ORDER BY user_id').all().map(x=>x.unique_amount),
++    [11990,12090,11890]);
++  const partnerId=40;
++  sys.db.prepare("INSERT INTO partners(user_id,username,status,code) VALUES(?,'partner','approved','v9partner')").run(partnerId);
++  for(const buyer of [2,3]) sys.db.prepare("INSERT INTO partner_buyers(buyer,partner,joined_at) VALUES(?,?,'2024-01-01T00:00:00Z')").run(buyer,partnerId);
++  for(const [val,ref] of [[12090,'BANKV9PLUS100'],[11890,'BANKV9MINUS100']]) {
++    const res=await sys.relay({sender:'BankDemo',eventId:'sms:'+ref,text:notification(val,ref)});
++    assert.equal(res.status,200);
++    assert.equal(res.data.matched,true);
++  }
++  assert.deepEqual(sys.db.prepare('SELECT status FROM payments WHERE user_id IN (2,3) ORDER BY user_id').all().map(x=>x.status),
++    ['paid','paid']);
++  assert.deepEqual(sys.db.prepare('SELECT amount FROM payments WHERE user_id IN (2,3) ORDER BY user_id').all().map(x=>x.amount),
++    [11990,11990]);
++  const store=new Store(sys.env.DB);
++  assert.ok(await fulfillOrder(store,'donat',b.data.id,10000));
++  assert.ok(await fulfillOrder(store,'donat',c.data.id,10000));
++  const earns=sys.db.prepare('SELECT commission FROM partner_earnings ORDER BY order_id').all().map(x=>x.commission);
++  assert.deepEqual(earns,[209,189]);
++  assert.equal(sys.db.prepare('SELECT COALESCE(SUM(p2p_balance),0) AS total FROM accounts').get().total,0);
++  const dup=await sys.relay({sender:'BankDemo',eventId:'sms:BANKV9PLUS100',text:notification(12090,'BANKV9PLUS100')});
++  assert.equal(dup.data.duplicate,true);
++  assert.equal(sys.db.prepare('SELECT COUNT(*) AS n FROM p2p_incoming').get().n,2);
++});
++
++test('V9 parallel reservations use three different sums, never the same card+amount twice',async()=>{
++  const sys=app();
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};+  const results=await Promise.all([1,2,3].map(async id=>sys.api(id,'donat/create',{
++    ...data,requestId:'v9-parallel-'+id})));
++  assert.deepEqual(results.map(x=>x.status),[200,200,200]);
++  assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices').all().map(x=>x.unique_amount).sort((a,b)=>a-b),
++    [11890,11990,12090]);
++  const count=sys.db.prepare("SELECT COUNT(DISTINCT card_id||'/'||unique_amount) AS n FROM invoices").get();
++  assert.equal(count.n,3);
++});
++
++test('V9 checked invoice expires at 60 seconds, releases customer, but bank audit remains',async()=>{
++  const sys=app();
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const created=await sys.api(1,'donat/create',{...data,requestId:'v9-claim-and-expire'});
++  assert.equal(created.status,200);
++  const id=created.data.invoiceId;
++  const checked=await sys.api(1,`invoice/${id}/check`,{});
++  assert.equal(checked.status,200);
++  sys.db.prepare('UPDATE invoices SET lease_expires_at=unixepoch()-1 WHERE id=?').run(id);
++  await sys.scheduled();await sys.drain();
++  const order=sys.db.prepare('SELECT status FROM donat_orders WHERE id=?').get(created.data.id);
++  const invoice=sys.db.prepare('SELECT status FROM invoices WHERE id=?').get(id);
++  assert.equal(invoice.status,'expired');
++  assert.equal(order.status,'cancelled');
++  const next=await sys.api(1,'donat/create',{...data,requestId:'v9-after-60'});
++  assert.equal(next.status,200,JSON.stringify(next.data));
++  assert.equal(sys.db.prepare('SELECT unique_amount FROM invoices WHERE id=?').get(next.data.invoiceId).unique_amount,12090);
++});
++
++test('V9 claim after two minutes replaces the remaining five minutes with sixty seconds',async()=>{
++  const sys=app();
++  const r=await sys.api(1,'donat/create',{
++    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++    paymentMethod:'uzcard',requestId:'v9-after-two-min'});
++  assert.equal(r.status,200);
++  sys.db.prepare(`UPDATE invoices
++    SET created_at=unixepoch()-120, expires_at=unixepoch()+480, lease_expires_at=unixepoch()+300
++    WHERE id=?`).run(r.data.invoiceId);
++  const statusBefore=(await sys.api(1,`invoice/${r.data.invoiceId}/status`,null,'GET')).data;
++  assert.ok(statusBefore.expiresAt-statusBefore.serverTime>=299);
++  const click=await sys.api(1,`invoice/${r.data.invoiceId}/check`,{});
++  assert.equal(click.status,200);
++  assert.ok(click.data.expiresAt-click.data.serverTime<=60);
++  assert.ok(click.data.expiresAt-click.data.serverTime>=59);
++});
++
++test('V9 legacy V8 invoice without lease_expires_at retains original deadline',async()=>{
++  const sys=app();
++  const placed=await sys.api(1,'donat/create',{
++    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++    paymentMethod:'uzcard',requestId:'v8-legacy-preserved'});
++  assert.equal(placed.status,200);
++  sys.db.prepare('UPDATE invoices SET lease_expires_at=NULL WHERE id=?').run(placed.data.invoiceId);
++  const current=(await sys.api(1,`invoice/${placed.data.invoiceId}/status`,null,'GET')).data;
++  assert.equal(current.expiresAt-current.createdAt,600);
++});
+diff --git a/tests/pro-payment-ui.test.mjs b/tests/pro-payment-ui.test.mjs
+index b2eeb8f..335daae 100644
+--- a/tests/pro-payment-ui.test.mjs
++++ b/tests/pro-payment-ui.test.mjs
+@@ -18,6 +18,6 @@ test('payment page includes a stable customer-visible order reference', () => {
+ test('expiry no longer attempts to claim payment and uses server status only', () => {
+   assert.match(source, /if \(check\) check\.disabled = true/);
+   assert.match(source, /const current = await ui\.api\(`invoice\/\$\{invoice\.id\}\/status`, null, 'GET'\)/);
+-  assert.match(source, /invoice\.status === 'expired' \|\| invoice\.checkedAt \? refresh\(version\) : startCheck\(version\)/);
++  assert.match(source, /invoice\.checkedAt \? refresh\(version\) : startCheck\(version\)/);
+   assert.doesNotMatch(source, /invoice\.status\s*=\s*['"]paid['"]/);
+ });
+diff --git a/wrangler.production.jsonc b/wrangler.production.jsonc
+index f3bf388..5ce277f 100644
+--- a/wrangler.production.jsonc
++++ b/wrangler.production.jsonc
+@@ -30,7 +30,7 @@
+   ],
+   "vars": {
+     "BOT_USERNAME": "arslanboostbot",
+-    "MINIAPP_URL": "https://arslan-boost-bot.zenin7210.workers.dev/?v=20261120-history-v8",
++    "MINIAPP_URL": "https://arslan-boost-bot.zenin7210.workers.dev/?v=20261120-payment-v9",
+     "SYNC_TELEGRAM_MENU": "1",
+     "TELEGRAM_TEST_ENV": "0",
+     "ENABLE_PAYMENTS": "1",
