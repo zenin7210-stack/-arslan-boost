@@ -135,3 +135,12 @@ jobs:
               print(f'=== TARGET {fn} {term} offset {p} ===')
               print(s[max(0,p-160):min(len(s),p+window)])
           PY
+
+      - name: Inspect history tests and bank late-event test expectations
+        shell: bash
+        run: |
+          cd release
+          echo '--- history-ui tests lines 1-160 ---'
+          sed -n '1,160p' tests/history-ui.test.mjs
+          echo '--- p2p test lines 950-1020 ---'
+          sed -n '950,1020p' tests/p2p.test.mjs
