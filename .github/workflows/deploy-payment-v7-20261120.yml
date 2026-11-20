@@ -173,7 +173,7 @@ jobs:
           npm test > /tmp/admin-v5-tests.txt 2>&1 || { tail -80 /tmp/admin-v5-tests.txt; exit 1; }
           tail -22 /tmp/admin-v5-tests.txt
           grep -q '^# fail 0$' /tmp/admin-v5-tests.txt
-          grep -q '^# pass 74
+          grep -q '^# pass 74$' /tmp/admin-v5-tests.txt
           grep -q '^# skipped 26$' /tmp/admin-v5-tests.txt
           node - <<'JS'
           const fs=require('fs');
@@ -304,140 +304,6 @@ jobs:
           const j=require('/tmp/v5-health.json');
           if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production unhealthy');
           console.log('PASS: healthy Worker, payments enabled, v7 payment UX, welcome and admin banners deployed');
-          JS
-              exit 0
-            fi
-            sleep 4
-          done
-          echo '::error::Production did not return expected release assets'
-          exit 1
- /tmp/admin-v5-tests.txt
-          grep -q '^# skipped 26$' /tmp/admin-v5-tests.txt
-          node - <<'JS'
-          const fs=require('fs');
-          const c=JSON.parse(fs.readFileSync('wrangler.production.jsonc','utf8'));
-          const p=fs.readFileSync('src/p2p.mjs','utf8');
-          const w=fs.readFileSync('src/worker.mjs','utf8');
-          const m=fs.readFileSync('migrations/0018_release_paid_order_holds.sql','utf8');
-          if(c.name!=='arslan-boost-bot'||c.account_id!=='b4cabfc322b7108c44aa96a7bae0010c'
-              ||c.d1_databases?.[0]?.database_name!=='arslan-boost-payments'
-              ||c.keep_vars!==true||Object.hasOwn(c.vars||{},'P2P_MODE'))throw Error('Unsafe Cloudflare config');
-          if(!p.includes('const HOLD_SECONDS = 10 * 60;')||!p.includes('const TRANSFER_STEPS = [0];')
-              ||!p.includes('Принять оплату · сверить банк'))throw Error('Bank safety missing');
-          if(!w.includes('work:finish:')||!w.includes("sendPhoto")||!w.includes("handleCostReply"))
-              throw Error('New admin actions missing');
-          if(m.includes('DROP TABLE')||m.includes('DELETE FROM')||!m.includes('DROP TRIGGER IF EXISTS arslan_one_active_donat'))
-              throw Error('Migration not strictly limited to indefinite order locks');
-          console.log('PASS: exact 10-minute P2P hold, admin callbacks, and non-destructive migration');
-          JS
-
-      - name: Verify private bank settings and current D1 indexes before migration
-        id: baseline
-        working-directory: release
-        shell: bash
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN"
-          curl -fsSL --max-time 25 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            'https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c/workers/scripts/arslan-boost-bot/settings' > /tmp/private-settings.json
-          node - <<'JS'
-          const j=require('/tmp/private-settings.json');
-          if(!j.success)throw Error('Cannot inspect Worker settings');
-          const b=j.result?.bindings||[];
-          if(!b.some(x=>x.name==='P2P_MODE'&&x.type==='plain_text'&&x.text==='private'))
-            throw Error('Bank payment mode changed; refusing deploy');
-          for(const k of ['ADMIN_ID','P2P_CARDS','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'])
-            if(!b.some(x=>x.name===k))throw Error('Missing private bank binding: '+k);
-          console.log('PASS: private payment sources and admin bindings');
-          JS
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' > /tmp/v5-ledger.json
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT name, type FROM sqlite_master WHERE name IN ('arslan_one_active_boost','arslan_one_active_donat','p2p_one_open_invoice','p2p_paid_requires_bank_event','p2p_settle_on_paid','p2p_match_incoming')" > /tmp/v5-schema.json
-          node - <<'JS'
-          const fs=require('fs');
-          function rows(f){const j=JSON.parse(fs.readFileSync(f));return (Array.isArray(j)?j:[j]).flatMap(x=>x.results||[]);}
-          const last=rows('/tmp/v5-ledger.json')[0]?.name;
-          if(!['0017_support_dialogs.sql','0018_release_paid_order_holds.sql'].includes(last))
-              throw Error('Unexpected live migration '+last+'; no changes made');
-          const names=new Set(rows('/tmp/v5-schema.json').map(x=>x.name));
-          for(const n of ['p2p_one_open_invoice','p2p_paid_requires_bank_event','p2p_settle_on_paid','p2p_match_incoming'])
-              if(!names.has(n)) throw Error('Payment safety index or trigger missing: '+n);
-          const old=last==='0017_support_dialogs.sql';
-          const existing=['arslan_one_active_boost','arslan_one_active_donat'].filter(n=>names.has(n));
-          // The owner may already have removed one of the stale triggers manually.
-          // The new migration uses DROP TRIGGER IF EXISTS and is safe in either state.
-          console.log('Legacy order-hold triggers still installed:',existing.join(', ')||'none');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT,'needs_migration='+old+'\n');
-          console.log(old?'PASS: D1 holds identified; migration 0018 required':'PASS: migration already applied');
-          JS
-
-      - name: Record production D1 time-travel recovery bookmark
-        if: steps.baseline.outputs.needs_migration == 'true'
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 d1 time-travel info arslan-boost-payments --config wrangler.production.jsonc
-
-      - name: Drop only indefinite active-order triggers (preserve bank evidence and paid orders)
-        if: steps.baseline.outputs.needs_migration == 'true'
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 d1 migrations apply arslan-boost-payments --remote --config wrangler.production.jsonc
-
-      - name: Verify post-migration protected D1 schema
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command "SELECT name FROM sqlite_master WHERE name IN ('arslan_one_active_boost','arslan_one_active_donat','p2p_one_open_invoice','p2p_paid_requires_bank_event','p2p_settle_on_paid','p2p_match_incoming')" > /tmp/v5-after.json
-          npx --yes wrangler@4 d1 execute arslan-boost-payments --remote --config wrangler.production.jsonc --json \
-            --command 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' > /tmp/v5-after-ledger.json
-          node - <<'JS'
-          const fs=require('fs');
-          const rows=f=>{const j=JSON.parse(fs.readFileSync(f));return(Array.isArray(j)?j:[j]).flatMap(x=>x.results||[])};
-          if(rows('/tmp/v5-after-ledger.json')[0]?.name!=='0018_release_paid_order_holds.sql')
-              throw Error('Migration 0018 not installed');
-          const n=new Set(rows('/tmp/v5-after.json').map(x=>x.name));
-          for(const old of ['arslan_one_active_boost','arslan_one_active_donat'])
-              if(n.has(old))throw Error('Indefinite hold remains: '+old);
-          for(const safe of ['p2p_one_open_invoice','p2p_paid_requires_bank_event','p2p_settle_on_paid','p2p_match_incoming'])
-              if(!n.has(safe))throw Error('Missing payment protection '+safe);
-          console.log('PASS: no indefinite order blocks; bank safety retained');
-          JS
-
-      - name: Deploy strictly verified Worker and existing original Mini App
-        working-directory: release
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@4 deploy --config wrangler.production.jsonc --keep-vars
-
-      - name: Verify production health, product images and admin assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          URL='https://arslan-boost-bot.zenin7210.workers.dev'
-          for attempt in {1..12}; do
-            if curl -fsSL --max-time 20 "$URL/healthz" -o /tmp/v5-health.json && \
-               curl -fsSL --max-time 20 "$URL/assets/donat/admin/cover-gold-rinok.jpg" -o /tmp/v5-cover.jpg && \
-               cmp -s /tmp/v5-cover.jpg release/public/assets/donat/admin/cover-gold-rinok.jpg && \
-               curl -fsSL --max-time 20 "$URL/assets/start-welcome-v6.jpg" -o /tmp/v6-start.jpg && \
-               cmp -s /tmp/v6-start.jpg release/public/assets/start-welcome-v6.jpg; then
-              node - <<'JS'
-          const j=require('/tmp/v5-health.json');
-          if(j.ok!==true||j.paymentsEnabled!==true)throw Error('Production unhealthy');
-          console.log('PASS: healthy Worker, payments enabled, welcome JPEG and admin banners deployed');
           JS
               exit 0
             fi
