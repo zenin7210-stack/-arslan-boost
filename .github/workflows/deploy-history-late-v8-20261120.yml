@@ -163,7 +163,7 @@ jobs:
           done
           echo 'PASS: deployed Mini App matches expected v7 before v8 changes'
 
-      - name: Upgrade history and give admins 10-minute late bank context
+      - name: Upgrade history and give admins 10-minute late bank context (v8.1)
         shell: bash
         run: |
           set -euo pipefail
