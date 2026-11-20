@@ -158,7 +158,7 @@ assert "function openHistoryEntry(" in app
 app_file.write_text(app)
 
 # Bust Telegram's cached Mini App HTML/JS; do not change catalog assets.
-matches=re.findall(r'src="([^"]*app\.js(?:\?[^"]*)?)"',html)
+matches=re.findall(r'src="(app\.js(?:\?[^"]*)?)"',html)
 assert len(matches)==1, matches
 oldjs=matches[0]
 newjs=oldjs.split("?")[0]+'?v=20261120-history-v8'
