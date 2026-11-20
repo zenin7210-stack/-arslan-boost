@@ -179,19 +179,19 @@ jobs:
           done
           echo 'PASS: all live V8 frontend assets match verified source'
 
-      - name: Apply verified V10 diff from V8 to V9 checkout and six redesigned product pages
+      - name: Apply complete V10 patch with D1 migration, V9 checkout, redesigned product pages
         shell: bash
         run: |
           set -euo pipefail
           printf '%s  %s\n' \
-            'b928276adde1c38635fdc1bac8a0a3f8e6ec7c5304803ed9a1a7549eebac2c2e' \
+            'e339e2749b7b59f64707d401a65b5c0d0b695ff1dd6f2c386530eb2a0ac8ded6' \
             releases/arslan-boost-v10-20261120.xz64.txt | sha256sum -c -
           python3 - <<'PY'
           import base64,lzma,hashlib
           from pathlib import Path
           blob=''.join(Path('releases/arslan-boost-v10-20261120.xz64.txt').read_text().split())
           patch=lzma.decompress(base64.b64decode(blob,validate=True))
-          if hashlib.sha256(patch).hexdigest()!='84f8e88f8caba3a3c976fb527ca16b2d75c4e35254ab874a49cafc2dbc461003':
+          if hashlib.sha256(patch).hexdigest()!='09ea1f7f86e9022633af903d2d7a461cc6cf774f59613d85e50291ce587c62ea':
               raise SystemExit('V10 release checksum does not match approved diff')
           Path('/tmp/arslan-v10.patch').write_bytes(patch)
           print('PASS: V10 signed release patch byte checksum')
