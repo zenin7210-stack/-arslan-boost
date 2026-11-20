@@ -182,7 +182,10 @@ old="assert.match(html,/data-history-filter=\"completed\"/);"
 assert old in h
 h=h.replace(old,"assert.doesNotMatch(html,/data-history-filter=/);\n  assert.match(html,/data-history=\"orders\"/);\n  assert.match(html,/data-history=\"payments\"/);")
 old="assert.equal(u.nodes.get('#filters').hidden,true);"
-assert h.count(old)==2
+assert h.count(old)==1
+h=h.replace(old,"assert.doesNotMatch(html,/id=\"filters\"/);")
+old="assert.equal(a.nodes.get('#filters').hidden,true);"
+assert h.count(old)==1
 h=h.replace(old,"assert.doesNotMatch(html,/id=\"filters\"/);")
 a=h.index("test('paid BOOST is in paid filter with accurate status, not waiting'")
 b=h.index("test('payment and cancelled entries remain filterable",a)
