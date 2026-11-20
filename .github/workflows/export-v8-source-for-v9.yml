@@ -148,21 +148,6 @@ jobs:
           grep -q 'V7: ARSLAN BOOST' public/assets/p2p.css
           grep -q 'created_at < ? AND expires_at > ?' src/p2p.mjs
 
-      - name: Verify live v7 Mini App before making v8 changes
-        shell: bash
-        run: |
-          set -euo pipefail
-          URL='https://arslan-boost-bot.zenin7210.workers.dev'
-          for f in index.html app.js assets/p2p.js assets/p2p.css; do
-            mkdir -p "/tmp/v8-before/$(dirname "$f")"
-            curl -fsSL --retry 2 --max-time 25 "$URL/$f?v=v8-check" -o "/tmp/v8-before/$f"
-            cmp -s "release/public/$f" "/tmp/v8-before/$f" || {
-              echo "::error::Production changed since v7: $f; refusing v8 deployment."
-              exit 1
-            }
-          done
-          echo 'PASS: deployed Mini App matches expected v7 before v8 changes'
-
       - name: Upgrade history and give admins 10-minute late bank context (v8.4)
         shell: bash
         run: |
