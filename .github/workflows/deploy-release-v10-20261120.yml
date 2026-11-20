@@ -209,6 +209,7 @@ jobs:
           for file in src/p2p.mjs src/partners.mjs public/app.js public/assets/p2p.js public/assets/donat/shop.js; do
             node --check "$file"
           done
+          set -x
           grep -Fq 'const HOLD_SECONDS = 7 * 60;' src/p2p.mjs
           grep -Fq 'const CHECK_SECONDS = 60;' src/p2p.mjs
           grep -Fq 'const TRANSFER_STEPS = [0, 100, -100];' src/p2p.mjs
