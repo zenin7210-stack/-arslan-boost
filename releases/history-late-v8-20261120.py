@@ -63,7 +63,11 @@ enriched = """
       incoming.occurred_at, incoming.occurred_at);
   }
 """ % json.dumps(late_sql,ensure_ascii=False)
-p2p = p2p[:unmatched_end] + enriched + p2p[unmatched_end:]
+assert "incoming.source, incoming.received_at FROM p2p_incoming incoming" in current_unmatched
+updated_unmatched = current_unmatched.replace(
+    "incoming.source, incoming.received_at FROM p2p_incoming incoming",
+    "incoming.source, incoming.received_at, incoming.occurred_at FROM p2p_incoming incoming")
+p2p = p2p[:unmatched_start] + updated_unmatched + enriched + p2p[unmatched_end:]
 
 start = p2p.index("      : " + chr(96) + "⚠️ <b>НЕОПОЗНАННЫЙ ПЕРЕВОД", head)
 end = p2p.index("    for (const admin of admins) {", start)
@@ -169,6 +173,76 @@ live=config['vars']['MINIAPP_URL']
 assert live.startswith("https://arslan-boost-bot.zenin7210.workers.dev"),live
 config['vars']['MINIAPP_URL']=live.split('?')[0]+'?v=20261120-history-v8'
 config_file.write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n')
+
+
+# Update historical UI tests to verify the newly agreed two-tab design.
+hpath=Path('tests/history-ui.test.mjs')
+h=hpath.read_text()
+old="assert.match(html,/data-history-filter=\"completed\"/);"
+assert old in h
+h=h.replace(old,"assert.doesNotMatch(html,/data-history-filter=/);\n  assert.match(html,/data-history=\"orders\"/);\n  assert.match(html,/data-history=\"payments\"/);")
+old="assert.equal(u.nodes.get('#filters').hidden,true);"
+assert h.count(old)==2
+h=h.replace(old,"assert.doesNotMatch(html,/id=\"filters\"/);")
+a=h.index("test('paid BOOST is in paid filter with accurate status, not waiting'")
+b=h.index("test('payment and cancelled entries remain filterable",a)
+h=h[:a]+"""test('paid BOOST keeps its paid status and remains in the unified order list',()=>{
+  const order={id:15,status:'paid',mode:'wing',game_id:'12345',current_rank:1,target_rank:2,
+    created_at:'2026-11-19T10:01:00.000Z',amount:13000};
+  const paid=prepare({orders:[order]});
+  assert.match(paid.html,/BOOST #15/);
+  assert.match(paid.html,/To‘langan · bajarilishi kutilmoqda/);
+  assert.equal(paid.nodes.get('#history-orders-count').textContent,'1');
+  assert.equal(paid.nodes.get('#history-orders-count').hidden,false);
+  const noExtraFilter=prepare({orders:[order],filter:'pending'});
+  assert.match(noExtraFilter.html,/data-history-id="15"/);
+});
+
+"""+h[b:]
+h=h.replace("test('payment and cancelled entries remain filterable and display date and amount'",
+            "test('payment and cancelled entries display date and amount without a subfilter'")
+hpath.write_text(h)
+
+# Exercise the new on-time arrival of an unmatched bank notice after close,
+# without accepting or crediting an expired order.
+tp=Path('tests/p2p.test.mjs')
+t=tp.read_text()
+anchor="test.skip('claiming paid without bank evidence triggers only a dispute alert, never credit'"
+assert t.count(anchor)==1
+newtest="""test('bank notice within ten minutes after order closes alerts admins with candidate but never credits',async t=>{
+  const calls=[];
+  t.mock.method(globalThis,'fetch',async(_url,opts)=>{
+    calls.push(JSON.parse(opts.body));return Response.json({ok:true,result:{message_id:63}});
+  });
+  const system=app({ADMIN_ID_2:'41'});
+  const first=await system.api(1,'donat/create',{
+    product:'spin_coins',option:'100',detail:'12345',expectedAmount:21990,
+    requestId:'late-10-min-test',paymentMethod:'uzcard'});
+  assert.equal(first.status,200);
+  const id=first.data.invoiceId;
+  const old=Math.floor(Date.now()/1000)-680;
+  system.db.prepare('UPDATE invoices SET created_at=?,expires_at=? WHERE id=?')
+    .run(old,old+600,id);
+  await system.scheduled(); await system.drain();
+  assert.equal((await system.api(1,'invoice/'+id+'/status',null,'GET')).data.status,'expired');
+  const late=await system.relay({sender:'BankDemo',eventId:'sms:late-10min-notice',
+    text:notification(21990,'BANKLATETENMIN',new Date((old+520)*1000).toISOString())});
+  assert.equal(late.status,200);
+  assert.equal(late.data.matched,false);
+  await system.scheduled(); await system.drain();
+  const adminMessages=calls.filter(x=>(x.chat_id===40||x.chat_id===41)
+    &&x.text?.includes('ПОЗДНИЙ БАНКОВСКИЙ ПЕРЕВОД'));
+  assert.equal(adminMessages.length,2);
+  assert.match(adminMessages[0].text,/Клиент/);
+  assert.match(adminMessages[0].text,/DONAT/);
+  assert.equal((await system.api(1,'state')).data.balance,0);
+  await system.scheduled(); await system.drain();
+  assert.equal(calls.filter(x=>x.text?.includes('ПОЗДНИЙ БАНКОВСКИЙ ПЕРЕВОД')).length,2);
+});
+
+"""
+t=t.replace(anchor,newtest+anchor)
+tp.write_text(t)
 
 print("PASS V8: late bank events within 600s show possible closed orders to admins")
 print("PASS V8: no automatic settling of expired invoices, existing event dedup retained")
