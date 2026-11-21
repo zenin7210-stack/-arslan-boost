@@ -42,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, json, os, urllib.request
+          import hashlib, json, os, subprocess, urllib.request
           cfg=json.load(open('wrangler.production.jsonc'))
           origin=cfg['vars']['MINIAPP_URL'].split('/?')[0]
           req=urllib.request.Request(f"https://api.cloudflare.com/client/v4/accounts/{cfg['account_id']}/workers/scripts/{cfg['name']}/deployments",
@@ -54,8 +54,8 @@ jobs:
           assert len(versions)==1 and versions[0]['percentage']==100, 'A rollout is in progress'
           current=versions[0]['version_id']
           def digest(b): return hashlib.sha256(b).hexdigest()
-          with urllib.request.urlopen(origin+'/index.html?verify='+os.environ['GITHUB_SHA'],timeout=30) as r:
-              live=digest(r.read())
+          live=digest(subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',
+              origin+'/index.html?verify='+os.environ['GITHUB_SHA']]))
           ready=current=='229877ba-9651-49e4-a3fe-545b9a652533' and live=='a6a311cfe1ba2dee99bf20200b4b7e0189c8862f28cf3696c6515fecb4de60b7'
           same=live==digest(open('public/index.html','rb').read())
           if not ready and not same: raise RuntimeError('Active production build differs from the verified release')
@@ -71,19 +71,21 @@ jobs:
         working-directory: release
         run: |
           python - <<'PY'
-          import json, os, time, urllib.request
+          import json, os, subprocess, time
           from pathlib import Path
           base=json.load(open('wrangler.production.jsonc'))['vars']['MINIAPP_URL'].split('/?')[0]
           root=Path('public')
           files=['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/donat/catalog.json']
           files+=sorted(str(p.relative_to(root)) for p in (root/'assets/donat/catalog').glob('*.webp'))
+          def fetch(url):
+              return subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',url])
           for attempt in range(8):
               try:
                   for path in files:
                       url=base+'/'+path+'?release='+os.environ['GITHUB_RUN_ID']+'-'+str(attempt)
-                      with urllib.request.urlopen(url,timeout=20) as r: body=r.read()
+                      body=fetch(url)
                       if body!=(root/path).read_bytes(): raise ValueError('Unexpected live asset: '+path)
-                  with urllib.request.urlopen(base+'/healthz',timeout=20) as r: assert json.load(r)['ok']
+                  assert json.loads(fetch(base+'/healthz'))['ok']
                   break
               except Exception:
                   if attempt==7: raise
