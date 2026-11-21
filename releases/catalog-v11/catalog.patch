@@ -46,10 +46,36 @@ index 0d24c68..2160246 100644
      const group = item => {
        if (['paid','approved','fulfilled','completed'].includes(item.status)) return 'completed';
 diff --git a/public/assets/donat/shop.css b/public/assets/donat/shop.css
-index 94a6fb0..b86e360 100644
+index 94a6fb0..f17d473 100644
 --- a/public/assets/donat/shop.css
 +++ b/public/assets/donat/shop.css
-@@ -857,3 +857,101 @@ img.widget-pack-art { border-radius: 11px; }
+@@ -371,20 +371,13 @@ body:has(#donat.active) .bottom .ui-icon { width: 19px; height: 19px; }
+   border-radius: 0;
+   background: radial-gradient(ellipse 100% 42% at 80% 0%, #172d4d, transparent 85%), #080f1e;
+ }
+-.product-sheet .sheet-head { flex: none; margin: 0 16px 14px; }
+-.product-sheet .sheet-head::after {
+-  content: 'ARSLAN BOOST';
+-  color: #94aec8;
+-  font-size: 11px;
+-  letter-spacing: .1em;
++.product-sheet .sheet-head {
++  flex: none; display: flex; align-items: center; justify-content: space-between;
++  gap: 12px; margin: 0 16px 12px;
+ }
+ .product-sheet #sheet-title {
+-  position: absolute;
+-  width: 1px;
+-  height: 1px;
+-  overflow: hidden;
+-  clip-path: inset(50%);
+-  white-space: nowrap;
++  order: 1; min-width: 0; text-align: right; color: #e5f3ff;
++  font-size: clamp(14px, 4vw, 18px); font-weight: 700; line-height: 1.2;
+ }
+ .product-sheet .close {
+   width: auto;
+@@ -857,3 +850,89 @@ img.widget-pack-art { border-radius: 11px; }
  .product-sheet:has(.v10-product) .widget-footer .action:not(:disabled){border:1px solid #6ae4ff;background:linear-gradient(180deg,#19d3fa,#0097e8 52%,#065ca6);box-shadow:0 0 14px #03bdfd5b,inset 0 1px #e0fcff77;color:white}
  @media(max-width:355px){.product-sheet .v10-product .variant{padding:6px}.product-sheet .v10-product .widget-pack-option .pack-select{padding-right:69px}.product-sheet .v10-core-tabs button{font-size:10.5px}.product-sheet .v10-product .widget-pack-option .pack-controls{gap:3px}}
  @media(prefers-reduced-motion:reduce){.product-sheet .v10-product .v10-core-tabs button{transition:none}}
@@ -117,22 +143,6 @@ index 94a6fb0..b86e360 100644
 +.game-grid { gap: 5px; }
 +.game-art { aspect-ratio: 1.96; object-fit: cover; border: 1px solid #82b5d6; border-radius: 9px; }
 +.game-name { color: #fff; font-size: clamp(9px,2.55vw,13px); font-weight: 600; }
-+@media (max-width: 600px) and (min-height: 620px) and (max-aspect-ratio: 2/3) {
-+  .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-+  .game-card {
-+    overflow: hidden;
-+    border: 1px solid #78accc;
-+    border-radius: 11px;
-+    background: #071d30;
-+  }
-+  .game-card .game-art {
-+    aspect-ratio: 2.12;
-+    object-fit: contain;
-+    border: 0;
-+    border-radius: 0;
-+  }
-+  .game-card .game-name { margin: 0; padding: 3px 2px; font-size: 12px; }
-+}
 +.catalog-order {
 +  display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 10px;
 +  padding: 5px 10px; min-height: 34px; border: 1px solid #4b90bb; border-radius: 18px;
@@ -149,10 +159,14 @@ index 94a6fb0..b86e360 100644
 +  aspect-ratio: auto; max-height: none; background: #071d30;
 +}
 +.product-sheet .widget-scroll[data-widget-product] .widget-cover img {
-+  display: block; width: 100%; height: auto; max-height: 175px; object-fit: contain;
++  display: block; width: 100%; height: auto; max-height: none; object-fit: contain;
++}
++.product-sheet .widget-field-row > :only-child { grid-column: 1 / -1; }
++.product-sheet .v10-product > label[for="product-quantity"] {
++  display: block; margin: 16px 0 6px; color: #e5f3ff; font-size: 13px; font-weight: 700;
 +}
 diff --git a/public/assets/donat/shop.js b/public/assets/donat/shop.js
-index 03c6eb7..926775e 100644
+index 03c6eb7..58ddb6b 100644
 --- a/public/assets/donat/shop.js
 +++ b/public/assets/donat/shop.js
 @@ -7,6 +7,7 @@ window.initArslanShop = function ({
@@ -205,7 +219,7 @@ index 03c6eb7..926775e 100644
    const quickUc = ['60', '325', '660', '1800', '3850', '8100'];
    const premiumGifts = ['3', '6', '12gift'];
    const brawlPasses = ['pass', 'passplus', 'propass'];
-@@ -126,8 +125,8 @@ window.initArslanShop = function ({
+@@ -126,8 +125,15 @@ window.initArslanShop = function ({
    const optionLabel = value => lang() === 'ru'
      ? value.replace(' oy', ' мес.').replace('(kirishsiz)', '(подарок)')
      : value;
@@ -213,10 +227,17 @@ index 03c6eb7..926775e 100644
 -  const cover = item => storefrontArt.has(item.id) ? `assets/donat/catalog/${item.id}.webp` : item.image;
 +  const subtitle = item => (lang() === 'ru' && translatedSubtitles[item.id]) || (item.id === 'gold_pass' && lang() === 'uz' ? 'Standoff 2 passi' : item.subtitle);
 +  const cover = item => storefrontArt.has(item.id) ? `assets/donat/catalog/${item.id}.webp?v=catalog11` : item.image;
++  function productCover(item) {
++    const isTelegram = item.id === 'telegram_premium' || item.id === 'telegram_stars';
++    const width = isTelegram ? 1536 : 1024;
++    const height = isTelegram ? (item.id === 'telegram_premium' ? 510 : 514) : 384;
++    const src = storefrontArt.has(item.id) ? `assets/donat/catalog/${item.id}-hd.webp?v=art12` : item.image;
++    return `<div class="widget-cover"><img src="${escape(src)}" width="${width}" height="${height}" alt="" decoding="async"></div>`;
++  }
    const botLink = start => {
      const link = telegramUrl(config.botUrl);
      if (!link) return null;
-@@ -138,14 +137,12 @@ window.initArslanShop = function ({
+@@ -138,14 +144,12 @@ window.initArslanShop = function ({
  
    function card(item) {
      const cardStyle = cardStyles[item.id] || 'telegram';
@@ -234,7 +255,7 @@ index 03c6eb7..926775e 100644
        </button>`;
    }
  
-@@ -163,7 +160,7 @@ window.initArslanShop = function ({
+@@ -163,7 +167,7 @@ window.initArslanShop = function ({
      const query = search.value.trim().toLowerCase();
      const items = state.items.filter(item => {
        const groupMatches = state.category === 'all' || (state.category === 'games') === (item.group === 'games');
@@ -243,7 +264,7 @@ index 03c6eb7..926775e 100644
        return groupMatches && query.split(/\s+/).every(word => title.includes(word));
      });
      const services = items.filter(item => item.group !== 'games');
-@@ -191,7 +188,7 @@ window.initArslanShop = function ({
+@@ -191,7 +195,7 @@ window.initArslanShop = function ({
      state.failed = false;
      render();
      try {
@@ -252,7 +273,7 @@ index 03c6eb7..926775e 100644
        if (!response.ok) throw new Error('Catalog unavailable');
        const data = await response.json();
        if (!Array.isArray(data.items)) throw new Error('Invalid catalog');
-@@ -208,6 +205,8 @@ window.initArslanShop = function ({
+@@ -208,6 +212,8 @@ window.initArslanShop = function ({
      document.querySelectorAll('[data-shop-text]').forEach(element => {
        element.textContent = t(element.dataset.shopText);
      });
@@ -261,7 +282,7 @@ index 03c6eb7..926775e 100644
      search.placeholder = t('search');
      search.setAttribute('aria-label', t('search'));
      clear.setAttribute('aria-label', t('clear'));
-@@ -256,7 +255,7 @@ window.initArslanShop = function ({
+@@ -256,7 +262,7 @@ window.initArslanShop = function ({
  
    function packArt(item, id) {
      let index = -1;
@@ -270,27 +291,46 @@ index 03c6eb7..926775e 100644
      else if (item.id === 'brawl_stars') index = brawlPacks.indexOf(id);
      else if (premiumGifts.includes(id)) index = quickUc.length + premiumGifts.indexOf(id);
      if (index < 0) {
-@@ -301,7 +300,7 @@ window.initArslanShop = function ({
+@@ -300,9 +306,7 @@ window.initArslanShop = function ({
+     const recipientLabel = item.id === 'pubg_mobile' ? 'Player ID' : item.input === 'game_id' ? t('game') : '@username';
      const starsQuantity = Number.isSafeInteger(order.quantity) ? order.quantity : '';
      return `<div class="widget-scroll${item.id === 'brawl_stars' ? '' : ' v10-product'}" data-widget-product="${escape(item.id)}">
-       <div class="widget-cover">
+-      <div class="widget-cover">
 -        <img src="assets/donat/cover-${widgetCovers[item.id]}.webp" width="960" height="540" alt="${escape(item.title)} · ARSLAN SHOP" decoding="async">
-+        <img src="${escape(cover(item))}" width="960" height="540" alt="${escape(item.title)} · ARSLAN SHOP" decoding="async">
-       </div>
+-      </div>
++      ${productCover(item)}
        <div class="widget-panel widget-recipient">
          <label for="product-detail">${recipientLabel}</label>
-@@ -362,7 +361,7 @@ window.initArslanShop = function ({
+         <div class="widget-field-row">${detailInput}<button id="verify-product-detail" type="button">${t('verify')}</button></div>
+@@ -342,7 +346,9 @@ window.initArslanShop = function ({
+       : '';
+     const selectedUnits = () => money(Number(order.option) * order.packs) + ' ' + item.unit;
+     const label = t({ game_id: 'game', username: 'username', optional: 'optional' }[item.input]);
+-    const example = item.input === 'username' ? (item.id === 'roblox' ? 'Username' : '@username') : t('example');
++    const example = item.input === 'optional'
++      ? (lang() === 'ru' ? 'Ник или комментарий' : 'Nick yoki izoh')
++      : item.input === 'username' ? (item.id === 'roblox' ? 'Username' : '@username') : t('example');
+     const detailInput = `<input id="product-detail" maxlength="64" placeholder="${escape(pubg ? 'Player ID' : example)}" value="${escape(item.id==='mobile_legends'&&order.detail.includes('-')?order.detail.split('-')[0]:order.detail)}" autocomplete="off"${widget ? ` autocapitalize="none" spellcheck="false"${pubg ? ' inputmode="numeric"' : ''}` : ''}>`;
+     let tabs = [];
+     if (pubg) tabs = [
+@@ -362,22 +368,21 @@ window.initArslanShop = function ({
        ['brawlPass', item.options.filter(([id]) => brawlPasses.includes(id))]
      ];
      order.tab ??= 0;
 -    const artwork = genericCovers[item.id] || item.image;
-+    const artwork = cover(item);
      const genericMarkup = `<div class="widget-scroll enhanced-product v10-product" data-widget-product="${escape(item.id)}">
-       <div class="widget-cover"><img src="${escape(artwork)}" width="960" height="540" alt="${escape(item.title)} · ARSLAN SHOP" decoding="async"></div>
+-      <div class="widget-cover"><img src="${escape(artwork)}" width="960" height="540" alt="${escape(item.title)} · ARSLAN SHOP" decoding="async"></div>
++      ${productCover(item)}
        ${coreTabs(order)}
-@@ -374,10 +373,10 @@ window.initArslanShop = function ({
+       <div class="widget-panel widget-recipient">
+         <label for="product-detail">${escape(label)}</label>
+-        <div class="widget-field-row">${detailInput}<button id="verify-product-detail" type="button">${t('verify')}</button></div>
++        <div class="widget-field-row">${detailInput}${item.input === 'optional' ? '' : `<button id="verify-product-detail" type="button">${t('verify')}</button>`}</div>
+         <p id="widget-detail-status" role="status" hidden></p>
+         ${coreProductTabs.some(([id]) => id === item.id) ? `<p class="v10-id-note">${lang()==='ru'?'Проверь игровой ID перед оплатой.':'To‘lovdan oldin o‘yin ID ni tekshiring.'}</p>` : ''}
        </div>
-       <h3 class="widget-label" id="package-label">${escape(item.kind==='quantity'?t('quantity'):t('chooseProduct'))}</h3>
+-      <h3 class="widget-label" id="package-label">${escape(item.kind==='quantity'?t('quantity'):t('chooseProduct'))}</h3>
++      ${isQuantity ? '' : `<h3 class="widget-label" id="package-label">${t('chooseProduct')}</h3>`}
        ${item.kind==='quantity' ? quantityInput : packageChoices(item,item.options,true)}
 -      ${priceSummary(widget ? null : total(order),item.max_packs&&!widget?selectedUnits():'')}
 +      ${priceSummary(null, item.max_packs && !widget ? selectedUnits() : '')}
@@ -301,7 +341,7 @@ index 03c6eb7..926775e 100644
  
      // Tab changes are a real product change: reset the old quote, keep only the typed ID.
      sheetBody.querySelectorAll('[data-core-product]').forEach(button => {
-@@ -404,7 +403,7 @@ window.initArslanShop = function ({
+@@ -404,7 +409,7 @@ window.initArslanShop = function ({
        if (serverIdField) order.serverId = serverIdField.value.trim();
        const validSelection = isQuantity ? quantityValid(order) : Boolean(selectedOption(order));
        if (price) price.textContent = validSelection ? amount(total(order)) : '—';
@@ -310,16 +350,25 @@ index 03c6eb7..926775e 100644
        next.disabled = !validSelection || !detailValid(order);
        const selected = quantity ? String(order.quantity) : order.option;
        options.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.option === selected)));
-@@ -429,7 +428,7 @@ window.initArslanShop = function ({
+@@ -429,14 +434,14 @@ window.initArslanShop = function ({
        if (detailStatus) detailStatus.hidden = true;
        update();
      });
 -    if (widget || genericCovers[item.id]) {
+-      sheetBody.querySelector('#verify-product-detail').onclick = () => {
 +    {
-       sheetBody.querySelector('#verify-product-detail').onclick = () => {
++      sheetBody.querySelector('#verify-product-detail')?.addEventListener('click', () => {
          detail.blur();
          const valid = detailValid(order);
-@@ -493,7 +492,7 @@ window.initArslanShop = function ({
+         detailStatus.textContent = t(valid ? 'formatValid' : 'formatInvalid');
+         detailStatus.dataset.valid = String(valid);
+         detailStatus.hidden = false;
+-      };
++      });
+       const tabButtons = [...sheetBody.querySelectorAll('[data-widget-tab]')];
+       const groups = [...sheetBody.querySelectorAll('[data-widget-group]')];
+       tabButtons.forEach((button, index) => {
+@@ -493,7 +498,7 @@ window.initArslanShop = function ({
      order.paymentMethod=method;
      const terms='';
      openSheet(t('pay'),`
@@ -328,7 +377,7 @@ index 03c6eb7..926775e 100644
        ${priceSummary(total(order))}
        <div class="donat-payment-picker">${paymentMethodTiles(method,true,available)}</div>
        ${terms}
-@@ -763,6 +762,9 @@ window.initArslanShop = function ({
+@@ -763,6 +768,9 @@ window.initArslanShop = function ({
      applyLanguage,
      openPartners,
      optionLabel,
@@ -340,7 +389,7 @@ index 03c6eb7..926775e 100644
    };
  };
 diff --git a/public/index.html b/public/index.html
-index 2ed7b5a..5f19317 100644
+index 2ed7b5a..67b1b16 100644
 --- a/public/index.html
 +++ b/public/index.html
 @@ -28,7 +28,7 @@
@@ -348,7 +397,7 @@ index 2ed7b5a..5f19317 100644
    <link rel="stylesheet" href="app.css?v=20261120-pro-v2">
    <link rel="stylesheet" href="assets/p2p.css?v=20261120-v9">
 -  <link rel="stylesheet" href="assets/donat/shop.css?v=20261120-product-v10">
-+  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-spacing">
++  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-art12">
  </head>
  <body>
    <main class="app">
@@ -400,7 +449,7 @@ index 2ed7b5a..5f19317 100644
    <button type="button" id="keyboard-done" class="keyboard-done" data-i18n="keyboardDone" tabindex="-1" hidden>Tayyor</button>
    <div class="intro" id="intro" aria-hidden="true"><div class="intro-content"><img class="intro-emblem" src="assets/intro-emblem.webp" width="1280" height="1280" alt="" decoding="async" fetchpriority="high"><div class="intro-brand">ARSLAN BOOST</div><div class="intro-game">STANDOFF <span>2</span></div><p class="intro-subtitle" data-i18n="introSubtitle">Rank oshirish xizmati</p></div></div>
 -  <script src="assets/donat/shop.js?v=20261120-product-v10"></script>
-+  <script src="assets/donat/shop.js?v=catalog11"></script>
++  <script src="assets/donat/shop.js?v=catalog11-art12"></script>
    <script src="assets/p2p.js?v=20261120-v9"></script>
 -  <script src="app.js?v=20261120-v9"></script>
 +  <script src="app.js?v=catalog11"></script>
@@ -422,12 +471,27 @@ index 08f706d..23a2b28 100644
                   FROM payments AS payment
                   LEFT JOIN invoices AS invoice ON invoice.order_payment_id = payment.id
                   WHERE payment.user_id = ? ORDER BY payment.id DESC LIMIT 100`, userId),
+diff --git a/src/worker.mjs b/src/worker.mjs
+index 7b304ea..2f1287a 100644
+--- a/src/worker.mjs
++++ b/src/worker.mjs
+@@ -463,8 +463,8 @@ async function handleCommand(env, ctx, store, config, message) {
+       if (!url) throw new RequestError('miniapp_url_required',503);
+       if(command==='/start')await bindPartner(store,message.from.id,args[0]);
+       const inline_keyboard=[[{text:'🚀 Mini App’ni ochish',web_app:{url}}]];
+-      const greeting='⚡ ARSLAN BOOST’ga xush kelibsiz!\n\n🚀 Rank Boost — Standoff 2\nDonat Shop — o‘yin valyutalari\n💰 Gold sotish — bozor orqali\n\nBuyurtma berish uchun Mini App’ni oching.';
+-      const customGreeting='<tg-emoji emoji-id="5404614161831341267">⚡</tg-emoji> <b>ARSLAN BOOST’ga xush kelibsiz!</b>\n\n<tg-emoji emoji-id="5404812288672703936">🚀</tg-emoji> <b>Rank Boost</b> — Standoff 2\n<b>Donat Shop</b> — o‘yin valyutalari\n<tg-emoji emoji-id="5123093405064234078">💰</tg-emoji> <b>Gold sotish</b> — bozor orqali\n\n<i>Buyurtma berish uchun Mini App’ni oching.</i>';
++      const greeting='⚡ ARSLAN BOOST’ga xush kelibsiz!\n\nBu yerda Standoff 2 uchun rank boost 🚀 buyurtma qilishingiz, donat sotib olishingiz yoki o‘z Gold’ingizni sotishingiz mumkin. 🪙';
++      const customGreeting='<tg-emoji emoji-id="5404614161831341267">⚡</tg-emoji> <b>ARSLAN BOOST’ga xush kelibsiz!</b>\n\nBu yerda Standoff 2 uchun rank boost <tg-emoji emoji-id="5404812288672703936">🚀</tg-emoji> buyurtma qilishingiz, donat sotib olishingiz yoki o‘z Gold’ingizni sotishingiz mumkin. <tg-emoji emoji-id="5123093405064234078">🪙</tg-emoji>';
+       const photo=new URL('assets/start-welcome-v6.jpg',url).href;
+       try {
+         return await telegram(env,'sendPhoto',{chat_id:chatId,photo,caption:customGreeting,
 diff --git a/tests/catalog-browser.py b/tests/catalog-browser.py
 new file mode 100644
-index 0000000..78ce359
+index 0000000..9df07b8
 --- /dev/null
 +++ b/tests/catalog-browser.py
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,138 @@
 +"""Mobile storefront regression tests against a local release, with isolated order fixtures."""
 +import json
 +import os
@@ -460,7 +524,21 @@ index 0000000..78ce359
 +    for item in ITEMS:
 +        tile = page.locator(f'button[data-product="{item["id"]}"]')
 +        assert tile.locator("img").evaluate("img => img.complete && img.naturalWidth > 0")
++        thumbnail = tile.locator("img").get_attribute("src")
 +        tile.click()
++        hero = page.locator(".widget-cover img")
++        expect(hero).to_be_visible()
++        expect(page.locator("#sheet-title")).to_be_visible()
++        assert hero.get_attribute("src") != thumbnail
++        assert hero.evaluate("""async img => {
++            await img.decode();
++            const rect = img.getBoundingClientRect();
++            return img.naturalWidth >= Math.max(1024, rect.width * 2)
++                && Math.abs(rect.height - rect.width * img.naturalHeight / img.naturalWidth) < 1;
++        }"""), item["id"]
++        if item["id"] == "gold_rinok":
++            expect(page.locator("#verify-product-detail")).to_have_count(0)
++            expect(page.locator("#product-next")).to_be_enabled()
 +        expect(page.locator("#product-detail")).to_be_visible()
 +        expect(page.locator("#product-next")).to_be_visible()
 +        page.locator("#close-sheet").click()
@@ -514,7 +592,7 @@ index 0000000..78ce359
 +    expect(row).to_contain_text("To‘lov kutilmoqda")
 +    tiles = page.locator(".game-card")
 +    expect(tiles).to_have_count(4)
-+    for width, height, columns in [(390, 720, 2), (430, 930, 2), (320, 568, 4)]:
++    for width, height, columns in [(390, 720, 4), (430, 930, 4), (320, 568, 4)]:
 +        page.set_viewport_size({"width": width, "height": height})
 +        positions = [tile.bounding_box() for tile in tiles.all()]
 +        assert len({round(box["x"]) for box in positions}) == columns, (width, positions)
@@ -565,6 +643,19 @@ index e53ec7d..b464d68 100644
      $:selector=>nodes.get(selector),
      all:selector=>selector==='[data-history]'?tabs:selector==='#filters [data-history-filter]'?filters:[],
      glyph:()=>'<svg class="glyph"></svg>',
+diff --git a/tests/p2p.test.mjs b/tests/p2p.test.mjs
+index d012190..4d46b25 100644
+--- a/tests/p2p.test.mjs
++++ b/tests/p2p.test.mjs
+@@ -1888,7 +1888,7 @@ test('/start has a horizontal Uzbek photo and exactly one Mini App button',async
+   assert.match(greeting.body.caption,/5404614161831341267/);
+   assert.match(greeting.body.caption,/5404812288672703936/);
+   assert.match(greeting.body.caption,/5123093405064234078/);
+-  assert.match(greeting.body.caption,/<b>Gold sotish<\/b>/);
++  assert.match(greeting.body.caption,/donat sotib olishingiz yoki o‘z Gold’ingizni sotishingiz mumkin/);
+   assert.equal(greeting.body.parse_mode,'HTML');
+   assert.match(greeting.body.photo,/\/assets\/start-welcome-v6\.jpg$/);
+   const buttons=greeting.body.reply_markup.inline_keyboard.flat();
 diff --git a/tests/product-v10.test.mjs b/tests/product-v10.test.mjs
 index 7e60db4..51c4353 100644
 --- a/tests/product-v10.test.mjs
