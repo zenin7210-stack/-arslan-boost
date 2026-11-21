@@ -1,0 +1,38 @@
+name: Arslan catalog verification
+on:
+  push:
+    branches:
+      - update/catalog-20261121
+    paths:
+      - '.github/workflows/catalog-verify.yml'
+      - 'catalog-update/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Read public storefront resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='https://arslan-boost-bot.zenin7210.workers.dev'
+          python3 - <<'PY'
+          import base64, gzip, hashlib, urllib.request
+          root = 'https://arslan-boost-bot.zenin7210.workers.dev/'
+          for path in ('healthz','index.html','app.js','app.css','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js'):
+              request = urllib.request.Request(root+path,headers={'Cache-Control':'no-cache','User-Agent':'ARSLAN-storefront-release-verification'})
+              with urllib.request.urlopen(request, timeout=25) as response:
+                  data = response.read()
+              if path == 'healthz':
+                  import json
+                  print('health', json.loads(data).get('ok'))
+                  continue
+              data.decode('utf-8')
+              print('PUBLIC-RESOURCE',path,len(data),hashlib.sha256(data).hexdigest())
+              encoded = base64.b64encode(gzip.compress(data,mtime=0)).decode()
+              for i in range(0,len(encoded),800):
+                  print('PUBLIC-DATA',path,i,encoded[i:i+800])
+          PY
