@@ -46,10 +46,10 @@ index 0d24c68..2160246 100644
      const group = item => {
        if (['paid','approved','fulfilled','completed'].includes(item.status)) return 'completed';
 diff --git a/public/assets/donat/shop.css b/public/assets/donat/shop.css
-index 94a6fb0..458e2a2 100644
+index 94a6fb0..b86e360 100644
 --- a/public/assets/donat/shop.css
 +++ b/public/assets/donat/shop.css
-@@ -857,3 +857,85 @@ img.widget-pack-art { border-radius: 11px; }
+@@ -857,3 +857,101 @@ img.widget-pack-art { border-radius: 11px; }
  .product-sheet:has(.v10-product) .widget-footer .action:not(:disabled){border:1px solid #6ae4ff;background:linear-gradient(180deg,#19d3fa,#0097e8 52%,#065ca6);box-shadow:0 0 14px #03bdfd5b,inset 0 1px #e0fcff77;color:white}
  @media(max-width:355px){.product-sheet .v10-product .variant{padding:6px}.product-sheet .v10-product .widget-pack-option .pack-select{padding-right:69px}.product-sheet .v10-core-tabs button{font-size:10.5px}.product-sheet .v10-product .widget-pack-option .pack-controls{gap:3px}}
  @media(prefers-reduced-motion:reduce){.product-sheet .v10-product .v10-core-tabs button{transition:none}}
@@ -117,8 +117,24 @@ index 94a6fb0..458e2a2 100644
 +.game-grid { gap: 5px; }
 +.game-art { aspect-ratio: 1.96; object-fit: cover; border: 1px solid #82b5d6; border-radius: 9px; }
 +.game-name { color: #fff; font-size: clamp(9px,2.55vw,13px); font-weight: 600; }
++@media (max-width: 600px) and (min-height: 620px) and (max-aspect-ratio: 2/3) {
++  .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
++  .game-card {
++    overflow: hidden;
++    border: 1px solid #78accc;
++    border-radius: 11px;
++    background: #071d30;
++  }
++  .game-card .game-art {
++    aspect-ratio: 2.12;
++    object-fit: contain;
++    border: 0;
++    border-radius: 0;
++  }
++  .game-card .game-name { margin: 0; padding: 3px 2px; font-size: 12px; }
++}
 +.catalog-order {
-+  display: flex; align-items: center; gap: 7px; width: 100%; margin-top: auto; position: relative; top: 6px;
++  display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 10px;
 +  padding: 5px 10px; min-height: 34px; border: 1px solid #4b90bb; border-radius: 18px;
 +  color: #f7fbff; background: linear-gradient(110deg,#0a2338,#062033); text-align: left; font-size: clamp(10px,2.8vw,13px);
 +}
@@ -324,7 +340,7 @@ index 03c6eb7..926775e 100644
    };
  };
 diff --git a/public/index.html b/public/index.html
-index 2ed7b5a..6476c3e 100644
+index 2ed7b5a..5f19317 100644
 --- a/public/index.html
 +++ b/public/index.html
 @@ -28,7 +28,7 @@
@@ -332,7 +348,7 @@ index 2ed7b5a..6476c3e 100644
    <link rel="stylesheet" href="app.css?v=20261120-pro-v2">
    <link rel="stylesheet" href="assets/p2p.css?v=20261120-v9">
 -  <link rel="stylesheet" href="assets/donat/shop.css?v=20261120-product-v10">
-+  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11">
++  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-spacing">
  </head>
  <body>
    <main class="app">
@@ -408,10 +424,10 @@ index 08f706d..23a2b28 100644
                   WHERE payment.user_id = ? ORDER BY payment.id DESC LIMIT 100`, userId),
 diff --git a/tests/catalog-browser.py b/tests/catalog-browser.py
 new file mode 100644
-index 0000000..56802cf
+index 0000000..78ce359
 --- /dev/null
 +++ b/tests/catalog-browser.py
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,124 @@
 +"""Mobile storefront regression tests against a local release, with isolated order fixtures."""
 +import json
 +import os
@@ -496,6 +512,21 @@ index 0000000..56802cf
 +    page.goto(url)
 +    row = page.locator("#catalog-order")
 +    expect(row).to_contain_text("To‘lov kutilmoqda")
++    tiles = page.locator(".game-card")
++    expect(tiles).to_have_count(4)
++    for width, height, columns in [(390, 720, 2), (430, 930, 2), (320, 568, 4)]:
++        page.set_viewport_size({"width": width, "height": height})
++        positions = [tile.bounding_box() for tile in tiles.all()]
++        assert len({round(box["x"]) for box in positions}) == columns, (width, positions)
++        last_bottom = max(box["y"] + box["height"] for box in positions)
++        gap = row.bounding_box()["y"] - last_bottom
++        assert 9 <= gap <= 11, (width, height, gap)
++        row.scroll_into_view_if_needed()
++        page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
++        row_box = row.bounding_box()
++        nav = page.locator("#bottom-nav").bounding_box()
++        assert row_box["y"] + row_box["height"] <= nav["y"], (row_box, nav)
++        print(f"Verified {width}×{height}: {columns} game columns, order gap {gap:.1f}px")
 +    payment["invoice_checking"] = 1
 +    page.locator('#service-switch [data-service="donat"]').click()
 +    expect(row).to_contain_text("To‘lov tekshirilmoqda")
