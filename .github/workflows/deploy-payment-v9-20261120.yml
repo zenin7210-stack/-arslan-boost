@@ -1,9 +1,5 @@
 name: ARSLAN BOOST v9 7-minute checkout and independent bank payment
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/deploy-payment-v9-20261120.yml
   workflow_dispatch:
 permissions:
   contents: read
@@ -214,7 +210,7 @@ jobs:
           npm test > /tmp/admin-v5-tests.txt 2>&1 || { grep -n -A 26 -B 3 '^not ok ' /tmp/admin-v5-tests.txt || true; tail -80 /tmp/admin-v5-tests.txt; exit 1; }
           tail -22 /tmp/admin-v5-tests.txt
           grep -q '^# fail 0$' /tmp/admin-v5-tests.txt
-          grep -q '^# pass 84 /tmp/admin-v5-tests.txt
+          grep -q '^# pass 84$' /tmp/admin-v5-tests.txt
           grep -q '^# skipped 26$' /tmp/admin-v5-tests.txt
           node - <<'JS'
           const fs=require('fs');
@@ -232,26 +228,6 @@ jobs:
           if(m.includes('DROP TABLE')||m.includes('DELETE FROM')||!m.includes('DROP TRIGGER IF EXISTS arslan_one_active_donat'))
               throw Error('Migration not strictly limited to indefinite order locks');
           console.log('PASS: exact 7-minute P2P hold with 60-second paid claim, admin callbacks, and non-destructive migration');
-          JS
-
- /tmp/admin-v5-tests.txt
-          grep -q '^# skipped 26$' /tmp/admin-v5-tests.txt
-          node - <<'JS'
-          const fs=require('fs');
-          const c=JSON.parse(fs.readFileSync('wrangler.production.jsonc','utf8'));
-          const p=fs.readFileSync('src/p2p.mjs','utf8');
-          const w=fs.readFileSync('src/worker.mjs','utf8');
-          const m=fs.readFileSync('migrations/0018_release_paid_order_holds.sql','utf8');
-          if(c.name!=='arslan-boost-bot'||c.account_id!=='b4cabfc322b7108c44aa96a7bae0010c'
-              ||c.d1_databases?.[0]?.database_name!=='arslan-boost-payments'
-              ||c.keep_vars!==true||Object.hasOwn(c.vars||{},'P2P_MODE'))throw Error('Unsafe Cloudflare config');
-          if(!p.includes('const HOLD_SECONDS = 10 * 60;')||!p.includes('const TRANSFER_STEPS = [0];')
-              ||!p.includes('Принять оплату · сверить банк'))throw Error('Bank safety missing');
-          if(!w.includes('work:finish:')||!w.includes("sendPhoto")||!w.includes("handleCostReply"))
-              throw Error('New admin actions missing');
-          if(m.includes('DROP TABLE')||m.includes('DELETE FROM')||!m.includes('DROP TRIGGER IF EXISTS arslan_one_active_donat'))
-              throw Error('Migration not strictly limited to indefinite order locks');
-          console.log('PASS: exact 10-minute P2P hold, admin callbacks, and non-destructive migration');
           JS
 
       - name: Verify private bank settings and current D1 indexes before migration
