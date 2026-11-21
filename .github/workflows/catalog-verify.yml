@@ -1,38 +1,240 @@
 name: Arslan catalog verification
 on:
   push:
-    branches:
-      - update/catalog-20261121
-    paths:
-      - '.github/workflows/catalog-verify.yml'
-      - 'catalog-update/**'
-  workflow_dispatch:
+    branches: [update/catalog-20261121]
+    paths: ['.github/workflows/catalog-verify.yml','catalog-update/**']
 permissions:
   contents: read
+  actions: read
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 18
     steps:
-      - name: Read public storefront resources
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore precise tested November 20 production source
+        uses: actions/download-artifact@v4
+        with:
+          name: arslan-boost-v3-verified-source
+          run-id: 44702451221
+          repository: zenin7210-stack/-arslan-boost
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release
+
+      - name: Verify locked baseline and patch source checksums
         shell: bash
         run: |
           set -euo pipefail
-          root='https://arslan-boost-bot.zenin7210.workers.dev'
+          printf '%s  %s\n' \
+            '94c59e327532f1f75931d764f60d263efba85229c8fe9bf74c2b238c8c278ced' release/src/worker.mjs \
+            'd03c894fa2e5384de36e2ef63ecad25ae5b7b9d5a667368abe48a3582d9b387f' release/src/p2p.mjs \
+            '995dba70936043ea4ba4704478d0e84d632c5363bd0c886d9c280c31b318c73d' release/tests/p2p.test.mjs \
+            '5abec56a8932e47a849b4b81e9fb3157a4c4a6d6224174e75371f9477cc707f0' release/wrangler.production.jsonc | sha256sum -c -
           python3 - <<'PY'
-          import base64, gzip, hashlib, urllib.request
-          root = 'https://arslan-boost-bot.zenin7210.workers.dev/'
-          for path in ('healthz','index.html','app.js','app.css','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js'):
-              request = urllib.request.Request(root+path,headers={'Cache-Control':'no-cache','User-Agent':'ARSLAN-storefront-release-verification'})
-              with urllib.request.urlopen(request, timeout=25) as response:
-                  data = response.read()
-              if path == 'healthz':
-                  import json
-                  print('health', json.loads(data).get('ok'))
-                  continue
-              data.decode('utf-8')
-              print('PUBLIC-RESOURCE',path,len(data),hashlib.sha256(data).hexdigest())
-              encoded = base64.b64encode(gzip.compress(data,mtime=0)).decode()
-              for i in range(0,len(encoded),800):
-                  print('PUBLIC-DATA',path,i,encoded[i:i+800])
+          from pathlib import Path
+          import hashlib, lzma, base64
+          b64=''.join(Path('releases/admin-booking-hotfix-v5-20261120.xz64.txt').read_text().split())
+          patch=lzma.decompress(base64.b64decode(b64,validate=True))
+          expect='7444e19ef995e57e23341d828ce568782604c29f1d33532fc2bcfca41548732d'
+          if hashlib.sha256(patch).hexdigest()!=expect:
+              raise SystemExit('Unrecognized patch bytes: refusing deployment')
+          Path('/tmp/admin-booking-v5.patch').write_bytes(patch)
           PY
+          cd release
+          git init -q
+          git apply --check /tmp/admin-booking-v5.patch
+          git apply /tmp/admin-booking-v5.patch
+          printf '%s  %s\n' \
+            '32f07c02130c7d120cf605ee5103f312e866034efb6197198c52f8422076e67d' src/worker.mjs \
+            '411e3835964d4df65a23c05be4f744da8f44f7537aed401d569054533320b76d' src/p2p.mjs \
+            '681f60735f73609b625d5a117957020618203faf99f563065c07e62883543e76' migrations/0018_release_paid_order_holds.sql | sha256sum -c -
+          echo "PASS: production source and payment-safe hotfix hashes verified"
+
+      - name: Generate Telegram-friendly admin photo banners from original product artwork
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet Pillow==11.3.0
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          covers=Path('release/public/assets/donat')
+          output=covers/'admin'
+          output.mkdir(exist_ok=True)
+          files=list(covers.glob('cover-*.webp'))
+          if len(files)<8: raise RuntimeError('Product artwork incomplete')
+          for item in files:
+              with Image.open(item) as im:
+                  im.convert('RGB').save(output/(item.stem+'.jpg'),format='JPEG',quality=91,optimize=True,subsampling=0)
+          print('Original banners untouched; JPEG Telegram previews:',len(files))
+          PY
+          test -s release/public/assets/donat/admin/cover-gold-rinok.jpg
+          test -s release/public/assets/donat/admin/cover-premium.jpg
+
+      - name: Replace only the /start and /preview caption; generate clean wide banner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageEnhance
+          import hashlib
+          base=Path('release')
+          js=base/'src/worker.mjs'
+          source=js.read_text()
+          begin=source.index("      const greeting='⚡ ARSLAN BOOST’ga xush kelibsiz!")
+          end=source.index("\n      try {",begin)
+          greeting=r"""      const greeting='⚡ ARSLAN BOOST’ga xush kelibsiz!\n\n🚀 Rank Boost — Standoff 2\nDonat Shop — o‘yin valyutalari\n💰 Gold sotish — bozor orqali\n\nBuyurtma berish uchun Mini App’ni oching.';"""
+          custom=r"""      const customGreeting='<tg-emoji emoji-id="5404614161831341267">⚡</tg-emoji> <b>ARSLAN BOOST’ga xush kelibsiz!</b>\n\n<tg-emoji emoji-id="5404812288672703936">🚀</tg-emoji> <b>Rank Boost</b> — Standoff 2\n<b>Donat Shop</b> — o‘yin valyutalari\n<tg-emoji emoji-id="5123093405064234078">💰</tg-emoji> <b>Gold sotish</b> — bozor orqali\n\n<i>Buyurtma berish uchun Mini App’ni oching.</i>';"""
+          photo="      const photo=new URL('assets/start-welcome-v6.jpg',url).href;"
+          replacement="\n".join([greeting,custom,photo])
+          original=source[begin:end]
+          assert original.count("const photo=new URL('assets/start-banner.jpg',url)") == 1, 'Unexpected greeting code'
+          assert '5404614161831341267' in original and '5123093405064234078' in original
+          js.write_text(source[:begin]+replacement+source[end:])
+
+          # Source V5 holds an older screenshot rather than a clean JPEG.
+          # Remove screenshot chrome and export a proper full-bleed horizontal image.
+          img=base/'public/assets/start-banner.jpg'
+          expected='be651e28a5e070394594e4ba250294df243def3dd753537b116498cba0f11928'
+          assert hashlib.sha256(img.read_bytes()).hexdigest() == expected, 'Banner baseline changed'
+          with Image.open(img) as im:
+              assert im.size==(998,594), 'Unexpected legacy banner dimensions'
+              out=im.convert('RGB').crop((12,48,988,536)).resize((1280,640),Image.Resampling.LANCZOS)
+              out=ImageEnhance.Contrast(out).enhance(1.10)
+              out=ImageEnhance.Sharpness(out).enhance(1.20)
+              out.save(base/'public/assets/start-welcome-v6.jpg','JPEG',quality=88,optimize=True,progressive=True)
+          assert (base/'public/assets/start-welcome-v6.jpg').stat().st_size>10000
+
+          test=base/'tests/p2p.test.mjs'
+          t=test.read_text()
+          assert "assert.match(greeting.body.caption,/o‘z Gold’ingizni sotishingiz mumkin/);" in t
+          assert "assert.match(greeting.body.photo,/\\/assets\\/start-banner\\.jpg$/);" in t
+          t=t.replace("assert.match(greeting.body.caption,/o‘z Gold’ingizni sotishingiz mumkin/);",
+                      "assert.match(greeting.body.caption,/<b>Gold sotish<\\/b>/);")
+          t=t.replace("assert.match(greeting.body.photo,/\\/assets\\/start-banner\\.jpg$/);",
+                      "assert.match(greeting.body.photo,/\\/assets\\/start-welcome-v6\\.jpg$/);")
+          test.write_text(t)
+          print('Updated /start and /preview, photo asset and greeting regression tests')
+          PY
+          node --check release/src/worker.mjs
+          test -s release/public/assets/start-welcome-v6.jpg
+
+      - name: Patch 10-minute reservations and compact original-color payment sheet
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,lzma,hashlib
+          blob=''.join(Path('releases/payment-holds-v7-20261120.xz64.txt').read_text().split())
+          script=lzma.decompress(base64.b64decode(blob,validate=True))
+          checksum='60b8704a40ef05d1b91e15caf84858781473f93dd9b78e7b3d09cd60608d5f83'
+          assert hashlib.sha256(script).hexdigest()==checksum, 'Wrong v7 patch checksum'
+          Path('release/v7_apply.py').write_bytes(script)
+          PY
+          cd release
+          python3 v7_apply.py
+          node --check src/p2p.mjs
+          node --check public/assets/p2p.js
+          grep -q 'V7: ARSLAN BOOST' public/assets/p2p.css
+          grep -q 'created_at < ? AND expires_at > ?' src/p2p.mjs
+
+      - name: Upgrade history and give admins 10-minute late bank context (v8.4)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp releases/history-late-v8-20261120.py release/v8_apply.py
+          cd release
+          python3 v8_apply.py
+          node --check src/p2p.mjs
+          node --check public/app.js
+          grep -q '20261120-history-v8' public/index.html
+          grep -q '20261120-history-v8' wrangler.production.jsonc
+          if grep -q 'data-history-filter' public/index.html; then
+            echo '::error::Status filter still in history'
+            exit 1
+          fi
+
+      - name: Apply complete V10 patch with D1 migration, V9 checkout, redesigned product pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            'e339e2749b7b59f64707d401a65b5c0d0b695ff1dd6f2c386530eb2a0ac8ded6' \
+            releases/arslan-boost-v10-20261120.xz64.txt | sha256sum -c -
+          python3 - <<'PY'
+          import base64,lzma,hashlib
+          from pathlib import Path
+          blob=''.join(Path('releases/arslan-boost-v10-20261120.xz64.txt').read_text().split())
+          patch=lzma.decompress(base64.b64decode(blob,validate=True))
+          if hashlib.sha256(patch).hexdigest()!='09ea1f7f86e9022633af903d2d7a461cc6cf774f59613d85e50291ce587c62ea':
+              raise SystemExit('V10 release checksum does not match approved diff')
+          Path('/tmp/arslan-v10.patch').write_bytes(patch)
+          print('PASS: V10 signed release patch byte checksum')
+          PY
+          cd release
+          git apply --check /tmp/arslan-v10.patch
+          git apply /tmp/arslan-v10.patch
+          printf '%s  %s\n' \
+            '3774d4ad84a6ce4e46ba505d2dcdb1bf80179f7ef0691c57f8801e6c21530027' src/p2p.mjs \
+            '7df6670530b463a30bae63b73178d76b0066128b62eaa57c5f26af7e91c5d6e3' public/assets/p2p.js \
+            'e732162e4072cb79a14db13ea7cd876a0630e4bf6f8b917fea8496827c0e95fa' public/assets/donat/shop.js \
+            '57e8637838b15a699e2454f43f12278ba86ebe0ffcd7cbce21e4433931e85a77' public/assets/donat/shop.css \
+            'a6a311cfe1ba2dee99bf20200b4b7e0189c8862f28cf3696c6515fecb4de60b7' public/index.html \
+            'b5f01f191767e6e67e832f81d8533ab6e97a807b488406809749a2b6b88c5094' wrangler.production.jsonc | sha256sum -c -
+          for file in src/p2p.mjs src/partners.mjs public/app.js public/assets/p2p.js public/assets/donat/shop.js; do
+            node --check "$file"
+          done
+          set -x
+          grep -Fq 'const HOLD_SECONDS = 7 * 60;' src/p2p.mjs
+          grep -Fq 'const CHECK_SECONDS = 60;' src/p2p.mjs
+          grep -Fq 'const TRANSFER_STEPS = [0, 100, -100];' src/p2p.mjs
+          grep -Fq "item.id === 'brawl_stars' ? '' : ' v10-product'" public/assets/donat/shop.js
+          grep -Fq "data-core-product" public/assets/donat/shop.js
+          test -f migrations/0019_v9_lease_and_amounts.sql
+          echo 'PASS: V10 payment, product, and Brawl exclusion hashes verified'
+
+
+      - name: Examine catalog, state schema and published artwork
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib, io, json, re, zipfile
+          from PIL import Image, ImageDraw
+          r=Path('release')
+          def emit(name,data):
+              print('PUBLIC-RESOURCE',name,len(data),hashlib.sha256(data).hexdigest())
+              encoded=base64.b64encode(gzip.compress(data,mtime=0)).decode()
+              for i in range(0,len(encoded),800): print('PUBLIC-DATA',name,i,encoded[i:i+800])
+          for f in ('public/assets/donat/catalog.json','src/catalog.mjs','src/store.mjs','tests/approved-ui.test.mjs','package.json'):
+              emit(f,(r/f).read_bytes())
+          for f in ('src/worker.mjs','src/p2p.mjs','src/partners.mjs'):
+              lines=(r/f).read_text().splitlines()
+              print('STATE LOCATIONS', f, [(i+1, l.strip()[:110]) for i,l in enumerate(lines) if ('donat/state' in l or 'lease_expires_at' in l and 'SELECT' in l or 'case "state"' in l or 'async function p2pState' in l)][:25])
+          print('RELEASE ROOT',sorted(f.name for f in r.iterdir()))
+          print('TEST FILES',sorted(f.name for f in (r/'tests').iterdir()))
+          print('MIGRATIONS',sorted(f.name for f in (r/'migrations').iterdir()))
+          catalog=json.loads((r/'public/assets/donat/catalog.json').read_text())
+          art=r/'public/assets/donat'
+          names=['catalog/universal-shop.webp','banner.webp','catalog/shop-mark.webp']+['catalog/'+item['id']+'.webp' for item in catalog['items']]+[p.name for p in sorted(art.glob('cover-*.webp'))]
+          sheet=Image.new('RGB',(600,((len(names)+3)//4)*98),'#061522')
+          draw=ImageDraw.Draw(sheet)
+          for i,n in enumerate(names):
+              im=Image.open(art/n).convert('RGB')
+              im.thumbnail((145,72)); left=i%4*150; top=i//4*98
+              sheet.paste(im,(left,top));draw.text((left,top+72),n.replace('catalog/','').replace('.webp',''),fill='white')
+          buf=io.BytesIO();sheet.save(buf,'JPEG',quality=83);emit('contact.jpeg',buf.getvalue())
+          old='ARSLAN_BOOST_PRO_SAFE_v3_2026-11-19.zip'
+          with zipfile.ZipFile(old) as z:
+              index={n[n.index('public/'):] for n in z.namelist() if 'public/' in n and not n.endswith('/')}
+              print('ARCHIVE FIRST',z.namelist()[:16])
+              actual={str(p.relative_to(r)) for p in (r/'public').rglob('*') if p.is_file()}
+              print('GENERATED OR ADDED PUBLIC ASSETS',sorted(actual-index))
+          PY
+      - name: Run the released suite
+        working-directory: release
+        run: npm test > /tmp/current-tests.log 2>&1 || { tail -60 /tmp/current-tests.log; exit 1; }
