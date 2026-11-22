@@ -56,7 +56,7 @@ jobs:
           def digest(b): return hashlib.sha256(b).hexdigest()
           live=digest(subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',
               origin+'/index.html?verify='+os.environ['GITHUB_SHA']]))
-          ready=current=='98469c83-4b07-4684-b335-808025834705' and live=='7747befd7f0c52be44fe4decb4257cd58f739efc382962d3ee9946e96e41fc2a'
+          ready=current=='755da60a-2370-4751-a011-dc60f3d83d1d' and live=='4600a7d56798f07e9daa725cc476748bcb123423dcbd12719db0bf68858e83b5'
           same=live==digest(open('public/index.html','rb').read())
           if not ready and not same: raise RuntimeError('Active production build differs from the verified release')
           with open(os.environ['GITHUB_OUTPUT'],'a') as output: print('deploy='+str(ready).lower(),file=output)

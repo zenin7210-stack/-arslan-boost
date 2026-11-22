@@ -1,5 +1,5 @@
 diff --git a/public/app.js b/public/app.js
-index 0d24c68..2160246 100644
+index 0d24c68..f797545 100644
 --- a/public/app.js
 +++ b/public/app.js
 @@ -433,7 +433,7 @@
@@ -45,8 +45,35 @@ index 0d24c68..2160246 100644
      const payments = [...state.payments];
      const group = item => {
        if (['paid','approved','fulfilled','completed'].includes(item.status)) return 'completed';
+@@ -991,7 +1012,7 @@
+     const response=await fetch(apiUrl(path),{method,headers:{
+       'Content-Type':'application/json','X-Telegram-Init-Data':tg?.initData||''},
+       ...(method==='POST'?{body:JSON.stringify(data||{})}:{}),signal:AbortSignal.timeout(15000)});
+-    let result;try{result=await response.json();}catch{throw new Error('connection_error');}if(!response.ok)throw new Error(result?.error||'connection_error');if(!result||typeof result!=='object')throw new Error('connection_error');return result;
++    let result;try{result=await response.json();}catch{throw new Error('connection_error');}if(!response.ok){const error=new Error(result?.error||'connection_error');error.retryAfter=Number(result?.retryAfter)||0;throw error;}if(!result||typeof result!=='object')throw new Error('connection_error');return result;
+   }
+   let syncVersion = 0;
+   async function syncState() {
+@@ -1127,7 +1148,7 @@
+       const key=crypto.randomUUID?.().replaceAll('-','') || Math.random().toString(36).slice(2)+Date.now().toString(36);
+       await api('support/send',{message:text,requestId:key});
+       input.value='';input.blur();await loadSupportChat();
+-    } catch(error){toast(error?.message==='support_rate_limited'?t('chatSlow'):error?.message==='support_dialog_closed'?t('chatClosed'):t('chatError'));}
++    } catch(error){toast(error?.message==='support_rate_limited'&&error.retryAfter?(state.lang==='ru'?'Можно написать через '+error.retryAfter+' сек.':error.retryAfter+' soniyadan keyin qayta yozing.'):error?.message==='support_rate_limited'?t('chatSlow'):error?.message==='support_dialog_closed'?t('chatClosed'):t('chatError'));}
+     finally {send.disabled=false;}
+   });
+   $('#support-telegram').onclick=()=>openTelegram(config.botUrl || adminUrl());
+@@ -1171,7 +1192,7 @@
+       const requestId=crypto.randomUUID?.().replaceAll('-','')||Math.random().toString(36).slice(2)+Date.now().toString(36);
+       await api('support/admin-reply',{userId:adminChat.thread,message,requestId});
+       input.value='';input.blur();await loadAdminThread();
+-    }catch(error){toast(error?.message==='support_rate_limited'?t('chatSlow'):t('chatError'));}
++    }catch(error){toast(error?.message==='support_rate_limited'&&error.retryAfter?(state.lang==='ru'?'Можно написать через '+error.retryAfter+' сек.':error.retryAfter+' soniyadan keyin qayta yozing.'):error?.message==='support_rate_limited'?t('chatSlow'):t('chatError'));}
+     finally{send.disabled=false;}
+   };
+   all('[data-page]').forEach(button => button.onclick = () => {playNavSound();nav(button.dataset.page,button.dataset.page==='donat'||button.dataset.page==='home');});
 diff --git a/public/assets/donat/shop.css b/public/assets/donat/shop.css
-index 94a6fb0..f17d473 100644
+index 94a6fb0..15ffae1 100644
 --- a/public/assets/donat/shop.css
 +++ b/public/assets/donat/shop.css
 @@ -371,20 +371,13 @@ body:has(#donat.active) .bottom .ui-icon { width: 19px; height: 19px; }
@@ -75,7 +102,7 @@ index 94a6fb0..f17d473 100644
  }
  .product-sheet .close {
    width: auto;
-@@ -857,3 +850,89 @@ img.widget-pack-art { border-radius: 11px; }
+@@ -857,3 +850,123 @@ img.widget-pack-art { border-radius: 11px; }
  .product-sheet:has(.v10-product) .widget-footer .action:not(:disabled){border:1px solid #6ae4ff;background:linear-gradient(180deg,#19d3fa,#0097e8 52%,#065ca6);box-shadow:0 0 14px #03bdfd5b,inset 0 1px #e0fcff77;color:white}
  @media(max-width:355px){.product-sheet .v10-product .variant{padding:6px}.product-sheet .v10-product .widget-pack-option .pack-select{padding-right:69px}.product-sheet .v10-core-tabs button{font-size:10.5px}.product-sheet .v10-product .widget-pack-option .pack-controls{gap:3px}}
  @media(prefers-reduced-motion:reduce){.product-sheet .v10-product .v10-core-tabs button{transition:none}}
@@ -165,8 +192,42 @@ index 94a6fb0..f17d473 100644
 +.product-sheet .v10-product > label[for="product-quantity"] {
 +  display: block; margin: 16px 0 6px; color: #e5f3ff; font-size: 13px; font-weight: 700;
 +}
++
++/* Product identity, recipient, options and running total share one mobile layout. */
++.product-sheet .sheet-head {
++  margin: 0 14px 12px; padding-bottom: 10px; border-bottom: 1px solid #1c405b;
++}
++.product-sheet #sheet-title {
++  display: flex; align-items: center; gap: 10px; justify-content: flex-end;
++  line-height: 1.18; font-size: clamp(13px, 3.8vw, 17px);
++}
++.product-sheet #sheet-title .widget-cover {
++  width: clamp(64px, 21vw, 106px); flex: none; margin: 0; border: 1px solid #356689;
++  border-radius: 8px; background: #071d30; box-shadow: none;
++}
++.product-sheet #sheet-title .widget-cover img { display: block; width: 100%; height: auto; }
++.product-sheet .widget-scroll .widget-recipient {
++  background: #0b2033; border: 1px solid #284c68; border-radius: 14px;
++  padding: 10px 12px; margin: 0 0 12px;
++}
++.product-sheet .widget-recipient label { margin-top: 0; }
++.product-sheet .widget-footer {display:flex; align-items:center; gap:12px; background:#061a2b;}
++.product-sheet .widget-footer .action {flex:1; min-width:0; margin:0; min-height:44px;}
++.checkout-total {color:#f1f8ff; font-size:clamp(14px,4vw,20px); font-variant-numeric:tabular-nums; white-space:nowrap;}
++.product-sheet .widget-scroll[data-widget-product="brawl_stars"] .variant-list,
++.product-sheet .widget-scroll[data-widget-product="roblox"] .variant-list {grid-template-columns:1fr;}
++.product-sheet .widget-scroll .variant[aria-pressed="true"] {border-color:#38c9f5; background:#10344a;}
++.product-sheet .widget-scroll .variant[aria-pressed="true"]:after {content:'✓'; color:#81edff; margin-left:auto;}
++.product-sheet .v10-product .widget-pack-option .pack-controls button {width:34px; height:36px; min-height:36px;}
++.product-sheet .v10-product:is([data-widget-product="gold_id"],[data-widget-product="spin_coins"]) .pack-select {padding-right:102px;}
++.product-sheet .v10-product[data-widget-product="pubg_mobile"] .widget-pack-option {padding-bottom:44px;}
++.product-sheet .v10-product[data-widget-product="pubg_mobile"] .pack-select {min-height:45px; padding:0;}
++.market-guide {margin:12px 0 4px; border:1px solid #28506d; border-radius:12px; padding:12px; background:#0b2033;}
++.market-guide summary {cursor:pointer; color:#aeebff; font-weight:650;}
++.market-guide ol {padding-left:20px; line-height:1.45; font-size:13px;}
++.market-guide li + li {margin-top:5px;}
 diff --git a/public/assets/donat/shop.js b/public/assets/donat/shop.js
-index 03c6eb7..58ddb6b 100644
+index 03c6eb7..9d521a6 100644
 --- a/public/assets/donat/shop.js
 +++ b/public/assets/donat/shop.js
 @@ -7,6 +7,7 @@ window.initArslanShop = function ({
@@ -177,7 +238,13 @@ index 03c6eb7..58ddb6b 100644
        sub: 'O‘yin valyutalari va xizmatlar', search: 'Qidirish…', clear: 'Qidiruvni tozalash',
        all: 'Hammasi', games: 'O‘yinlar', services: 'Servislar', filters: 'Do‘kon filtrlari',
        other: 'Boshqa o‘yinlar', showAll: 'Barchasi', noResults: 'Mahsulot topilmadi',
-@@ -46,6 +47,7 @@ window.initArslanShop = function ({
+@@ -41,11 +42,12 @@ window.initArslanShop = function ({
+       quoteChanged: 'Narx yangilandi. Buyurtmani qayta oching.',
+       buy: 'Sotib olish', verify: 'Tekshirish', formatValid: 'Format to‘g‘ri.',
+       formatInvalid: 'Kiritilgan ma’lumot formatini tekshiring.', chooseProduct: 'Mahsulotni tanlang',
+-      fastUc: 'UC tezkor', bundles: 'To‘plamlar', global: 'Global', login: 'Akkauntga kirib',
++      gift: 'Sovg‘a sifatida', fastUc: 'UC tezkor', bundles: 'To‘plamlar', global: 'Global', login: 'Akkauntga kirib',
+       gems: 'Gems', brawlPass: 'Brawl Pass',
        customStars: 'Ixtiyoriy miqdor', starsPrice: 'Narx', from: 'Kamida', to: 'Ko‘pi bilan'
      },
      ru: {
@@ -185,7 +252,14 @@ index 03c6eb7..58ddb6b 100644
        sub: 'Игровая валюта и услуги', search: 'Поиск…', clear: 'Очистить поиск',
        all: 'Все', games: 'Игры', services: 'Услуги', filters: 'Фильтры магазина',
        other: 'Другие игры', showAll: 'Все игры', noResults: 'Ничего не найдено',
-@@ -86,6 +88,7 @@ window.initArslanShop = function ({
+@@ -80,12 +82,13 @@ window.initArslanShop = function ({
+       quoteChanged: 'Цена обновилась. Откройте заказ заново.',
+       buy: 'Купить', verify: 'Проверить', formatValid: 'Формат верный.',
+       formatInvalid: 'Проверьте формат введённых данных.', chooseProduct: 'Выберите товар',
+-      fastUc: 'Быстрые UC', bundles: 'Наборы', global: 'Global', login: 'Со входом в аккаунт',
++      gift: 'В подарок', fastUc: 'Быстрые UC', bundles: 'Наборы', global: 'Global', login: 'Со входом в аккаунт',
+       gems: 'Гемы', brawlPass: 'Brawl Pass',
+       customStars: 'Своё количество', starsPrice: 'Цена', from: 'Минимум', to: 'Максимум'
      }
    };
    const translatedSubtitles = {
@@ -291,8 +365,12 @@ index 03c6eb7..58ddb6b 100644
      else if (item.id === 'brawl_stars') index = brawlPacks.indexOf(id);
      else if (premiumGifts.includes(id)) index = quickUc.length + premiumGifts.indexOf(id);
      if (index < 0) {
-@@ -300,9 +306,7 @@ window.initArslanShop = function ({
-     const recipientLabel = item.id === 'pubg_mobile' ? 'Player ID' : item.input === 'game_id' ? t('game') : '@username';
+@@ -297,12 +303,10 @@ window.initArslanShop = function ({
+   function widgetMarkup(order, detailInput, tabs) {
+     const { item } = order;
+     const stars = item.id === 'telegram_stars';
+-    const recipientLabel = item.id === 'pubg_mobile' ? 'Player ID' : item.input === 'game_id' ? t('game') : '@username';
++    const recipientLabel = item.id === 'brawl_stars' ? 'Player Tag' : item.id === 'pubg_mobile' ? 'Player ID' : item.input === 'game_id' ? t('game') : '@username';
      const starsQuantity = Number.isSafeInteger(order.quantity) ? order.quantity : '';
      return `<div class="widget-scroll${item.id === 'brawl_stars' ? '' : ' v10-product'}" data-widget-product="${escape(item.id)}">
 -      <div class="widget-cover">
@@ -307,13 +385,22 @@ index 03c6eb7..58ddb6b 100644
      const selectedUnits = () => money(Number(order.option) * order.packs) + ' ' + item.unit;
      const label = t({ game_id: 'game', username: 'username', optional: 'optional' }[item.input]);
 -    const example = item.input === 'username' ? (item.id === 'roblox' ? 'Username' : '@username') : t('example');
-+    const example = item.input === 'optional'
++    const example = item.id === 'brawl_stars' ? '#2PP9Q8' : item.input === 'optional'
 +      ? (lang() === 'ru' ? 'Ник или комментарий' : 'Nick yoki izoh')
 +      : item.input === 'username' ? (item.id === 'roblox' ? 'Username' : '@username') : t('example');
      const detailInput = `<input id="product-detail" maxlength="64" placeholder="${escape(pubg ? 'Player ID' : example)}" value="${escape(item.id==='mobile_legends'&&order.detail.includes('-')?order.detail.split('-')[0]:order.detail)}" autocomplete="off"${widget ? ` autocapitalize="none" spellcheck="false"${pubg ? ' inputmode="numeric"' : ''}` : ''}>`;
      let tabs = [];
      if (pubg) tabs = [
-@@ -362,22 +368,21 @@ window.initArslanShop = function ({
+@@ -350,7 +356,7 @@ window.initArslanShop = function ({
+       ['bundles', item.options.filter(([id]) => !quickUc.includes(id))]
+     ];
+     if (item.id === 'telegram_premium') tabs = [
+-      ['global', item.options.filter(([id]) => premiumGifts.includes(id))],
++      ['gift', item.options.filter(([id]) => premiumGifts.includes(id))],
+       ['login', item.options.filter(([id]) => !premiumGifts.includes(id))]
+     ];
+     if (item.id === 'mobile_legends') tabs = [
+@@ -362,22 +368,28 @@ window.initArslanShop = function ({
        ['brawlPass', item.options.filter(([id]) => brawlPasses.includes(id))]
      ];
      order.tab ??= 0;
@@ -333,24 +420,47 @@ index 03c6eb7..58ddb6b 100644
 +      ${isQuantity ? '' : `<h3 class="widget-label" id="package-label">${t('chooseProduct')}</h3>`}
        ${item.kind==='quantity' ? quantityInput : packageChoices(item,item.options,true)}
 -      ${priceSummary(widget ? null : total(order),item.max_packs&&!widget?selectedUnits():'')}
+-      ${item.id === 'gold_rinok' ? `<p class="notice">${t('market')}</p>` : ''}
 +      ${priceSummary(null, item.max_packs && !widget ? selectedUnits() : '')}
-       ${item.id === 'gold_rinok' ? `<p class="notice">${t('market')}</p>` : ''}
++      ${item.id === 'gold_rinok' ? `<details class="market-guide"><summary>${lang()==='ru'?'Как получить Gold':'Gold qanday olinadi?'}</summary><ol><li>${lang()==='ru'?'Выбери количество Gold.':'Gold miqdorini tanlang.'}</li><li>${t('market')}</li><li>${lang()==='ru'?'До выкупа сохрани цену, ник и аватар.':'Skin sotib olinguncha narx, nik va avatarni o‘zgartirmang.'}</li></ol></details>` : ''}
        </div><div class="widget-footer"><button class="action" type="button" id="product-next" disabled>${t('next')} →</button></div>`;
 -    openSheet(item.title, widget ? widgetMarkup(order, detailInput, tabs) : genericMarkup, true);
 +    openSheet(displayTitle(item), widget ? widgetMarkup(order, detailInput, tabs) : genericMarkup, true);
++
++    const heading = document.querySelector('#sheet-title');
++    heading.prepend(sheetBody.querySelector('.widget-cover'));
++    const footerPrice = document.createElement('strong');
++    footerPrice.className = 'checkout-total';
++    footerPrice.setAttribute('aria-live', 'polite');
++    sheetBody.querySelector('.widget-footer').prepend(footerPrice);
  
      // Tab changes are a real product change: reset the old quote, keep only the typed ID.
      sheetBody.querySelectorAll('[data-core-product]').forEach(button => {
-@@ -404,7 +409,7 @@ window.initArslanShop = function ({
+@@ -403,16 +415,19 @@ window.initArslanShop = function ({
+       order.detail = serverIdField ? `${detail.value.trim()}-${serverIdField.value.trim()}` : detail.value.trim();
        if (serverIdField) order.serverId = serverIdField.value.trim();
        const validSelection = isQuantity ? quantityValid(order) : Boolean(selectedOption(order));
-       if (price) price.textContent = validSelection ? amount(total(order)) : '—';
+-      if (price) price.textContent = validSelection ? amount(total(order)) : '—';
 -      if (units) units.textContent = selectedUnits();
++      const quote = validSelection ? amount(total(order)) : '—';
++      if (price) price.textContent = quote;
++      footerPrice.textContent = quote;
++      footerPrice.setAttribute('aria-label', t('price')+' · '+quote);
 +      if (units) units.textContent = validSelection ? selectedUnits() : '';
        next.disabled = !validSelection || !detailValid(order);
        const selected = quantity ? String(order.quantity) : order.option;
        options.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.option === selected)));
-@@ -429,14 +434,14 @@ window.initArslanShop = function ({
+       tiles.forEach(tile => {
+         const active = tile.dataset.pack === selected;
+         tile.classList.toggle('selected', active);
+-        tile.querySelector('.pack-count').textContent = active ? order.packs : '';
+-        tile.querySelector('.pack-minus').disabled = order.packs === 1 || (pubg && !active);
++        tile.querySelector('.pack-count').textContent = active ? order.packs : '0';
++        tile.querySelector('.pack-minus').disabled = !active;
+         tile.querySelector('.pack-plus').disabled = active && order.packs === item.max_packs;
+         if (pubg) {
+           const [id, , packPrice] = item.options.find(([id]) => id === tile.dataset.pack);
+@@ -429,14 +444,14 @@ window.initArslanShop = function ({
        if (detailStatus) detailStatus.hidden = true;
        update();
      });
@@ -368,7 +478,21 @@ index 03c6eb7..58ddb6b 100644
        const tabButtons = [...sheetBody.querySelectorAll('[data-widget-tab]')];
        const groups = [...sheetBody.querySelectorAll('[data-widget-group]')];
        tabButtons.forEach((button, index) => {
-@@ -493,7 +498,7 @@ window.initArslanShop = function ({
+@@ -467,10 +482,11 @@ window.initArslanShop = function ({
+         const option = button.closest('[data-pack]').dataset.pack;
+         const step = Number(button.dataset.packStep);
+         if (order.option === option) {
+-          order.packs = Math.max(1, Math.min(item.max_packs, order.packs + step));
++          if (step < 0 && order.packs === 1) order.option = '';
++          else order.packs = Math.min(item.max_packs, order.packs + step);
+         } else {
+           order.option = option;
+-          order.packs = pubg && step === 1 ? Math.min(item.max_packs, 2) : 1;
++          order.packs = 1;
+         }
+         update();
+       };
+@@ -493,7 +509,7 @@ window.initArslanShop = function ({
      order.paymentMethod=method;
      const terms='';
      openSheet(t('pay'),`
@@ -377,7 +501,16 @@ index 03c6eb7..58ddb6b 100644
        ${priceSummary(total(order))}
        <div class="donat-payment-picker">${paymentMethodTiles(method,true,available)}</div>
        ${terms}
-@@ -763,6 +768,9 @@ window.initArslanShop = function ({
+@@ -741,7 +757,7 @@ window.initArslanShop = function ({
+       const item = state.items.find(product => product.id === button.dataset.product);
+       if (item) productSheet({
+         item, quantity: widgetIds.has(item.id) ? undefined : item.min,
+-        option: widgetIds.has(item.id) ? '' : item.options[0][0], packs: 1,
++        option: '', packs: 1,
+         detail: '', requests: new Map()
+       });
+     }
+@@ -763,6 +779,9 @@ window.initArslanShop = function ({
      applyLanguage,
      openPartners,
      optionLabel,
@@ -389,7 +522,7 @@ index 03c6eb7..58ddb6b 100644
    };
  };
 diff --git a/public/index.html b/public/index.html
-index 2ed7b5a..67b1b16 100644
+index 2ed7b5a..bd4e3e3 100644
 --- a/public/index.html
 +++ b/public/index.html
 @@ -28,7 +28,7 @@
@@ -397,7 +530,7 @@ index 2ed7b5a..67b1b16 100644
    <link rel="stylesheet" href="app.css?v=20261120-pro-v2">
    <link rel="stylesheet" href="assets/p2p.css?v=20261120-v9">
 -  <link rel="stylesheet" href="assets/donat/shop.css?v=20261120-product-v10">
-+  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-art12">
++  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-chat13">
  </head>
  <body>
    <main class="app">
@@ -449,11 +582,141 @@ index 2ed7b5a..67b1b16 100644
    <button type="button" id="keyboard-done" class="keyboard-done" data-i18n="keyboardDone" tabindex="-1" hidden>Tayyor</button>
    <div class="intro" id="intro" aria-hidden="true"><div class="intro-content"><img class="intro-emblem" src="assets/intro-emblem.webp" width="1280" height="1280" alt="" decoding="async" fetchpriority="high"><div class="intro-brand">ARSLAN BOOST</div><div class="intro-game">STANDOFF <span>2</span></div><p class="intro-subtitle" data-i18n="introSubtitle">Rank oshirish xizmati</p></div></div>
 -  <script src="assets/donat/shop.js?v=20261120-product-v10"></script>
-+  <script src="assets/donat/shop.js?v=catalog11-art12"></script>
++  <script src="assets/donat/shop.js?v=catalog11-chat13"></script>
    <script src="assets/p2p.js?v=20261120-v9"></script>
 -  <script src="app.js?v=20261120-v9"></script>
-+  <script src="app.js?v=catalog11"></script>
++  <script src="app.js?v=catalog11-chat13"></script>
  </body></html>
+diff --git a/src/group-chat.mjs b/src/group-chat.mjs
+new file mode 100644
+index 0000000..4b784ad
+--- /dev/null
++++ b/src/group-chat.mjs
+@@ -0,0 +1,124 @@
++import { telegram, botToken } from './telegram.mjs';
++
++const modes = {
++  soft: { label: 'Yumshoq', burst: 8, copies: 4 },
++  normal: { label: 'Odatiy', burst: 5, copies: 3 },
++  strict: { label: 'Qat’iy', burst: 3, copies: 2 }
++};
++const defaults = { enabled: 0, welcome: 0, mode: 'normal' };
++const initialized = new WeakMap();
++
++function ready(db) {
++  if (!initialized.has(db)) {
++    const sql = [
++      `CREATE TABLE IF NOT EXISTS group_preferences(chat INTEGER PRIMARY KEY, enabled INTEGER DEFAULT 0, welcome INTEGER DEFAULT 0, mode TEXT DEFAULT 'normal', greeting TEXT)`,
++      'CREATE TABLE IF NOT EXISTS group_activity(chat INTEGER, mid INTEGER, author INTEGER, fingerprint TEXT, blocked INTEGER, stamp INTEGER DEFAULT (unixepoch()), PRIMARY KEY(chat,mid))',
++      'CREATE INDEX IF NOT EXISTS group_sender_window ON group_activity(chat,author,stamp)',
++      'CREATE INDEX IF NOT EXISTS group_activity_age ON group_activity(stamp)'
++    ];
++    initialized.set(db, (async () => { for (const statement of sql) await db.prepare(statement).run(); })().catch(e => { initialized.delete(db); throw e; }));
++  }
++  return initialized.get(db);
++}
++export async function expireGroupActivity(store) {
++  await ready(store.db);
++  await store.stmt('DELETE FROM group_activity WHERE stamp < unixepoch()-600').run();
++}
++const group = type => type === 'group' || type === 'supergroup';
++const admin = role => role === 'administrator' || role === 'creator';
++const member = (env, chat, user) => telegram(env, 'getChatMember', { chat_id: chat, user_id: user });
++
++async function panel(env, chat, settings, messageId) {
++  const { enabled, mode, welcome } = settings;
++  const rule = modes[mode];
++  const self = await member(env, chat, Number(botToken(env).split(':')[0]));
++  const canDelete = self.status === 'creator' || (self.status === 'administrator' &&
++    (self.can_delete_messages || self.can_delete_messages === undefined && !String(chat).startsWith('-100')));
++  const button = (text, value) => ({ text, callback_data: 'af:'+value });
++  const text = ['🛡 Guruh sozlamalari', '',
++    'Spamdan himoya: ' + (enabled ? 'yoqilgan' : 'o‘chirilgan'),
++    '10 soniyada '+rule.burst+' tagacha xabar. Bir xil xabarning 60 soniya ichidagi '+rule.copies+'-nusxasi o‘chiriladi.',
++    'Yangi a’zolar uchun salomlashuv: '+(welcome ? 'yoqilgan' : 'o‘chirilgan'),
++    'Salomlashuv matnini yozish: /salom Xush kelibsiz, {ism}! Standart matnga qaytish: /salom reset.',
++    ...(!canDelete ? ['', 'Himoya ishlashi uchun botga administrator maqomi va xabarlarni o‘chirish huquqini bering.'] : [])
++  ].join('\n');
++  const reply_markup = { inline_keyboard: [
++    [button(enabled ? 'Himoyani o‘chirish' : 'Himoyani yoqish', enabled ? 'off' : 'on')],
++    Object.entries(modes).map(([key, preset]) => button((key === mode ? '✓ ' : '')+preset.label,key)),
++    [button(welcome ? 'Salomlashuvni o‘chirish' : 'Salomlashuvni yoqish', welcome ? 'quiet' : 'greet')]
++  ] };
++  await telegram(env,messageId ? 'editMessageText' : 'sendMessage', {
++    chat_id: chat, ...(messageId ? {message_id:messageId} : {}), text, reply_markup
++  }).catch(e => { if (!(messageId && e.telegramCode===400)) throw e; });
++}
++async function settings(store, chat) {
++  await ready(store.db);
++  return await store.first('SELECT * FROM group_preferences WHERE chat=?',chat) || defaults;
++}
++export async function groupCallback(env,store,q) {
++  if (!q.data?.startsWith('af:')) return false;
++  const chat=q.message?.chat;
++  if (!group(chat?.type) || !admin((await member(env,chat.id,q.from.id)).status)) {
++    await telegram(env,'answerCallbackQuery',{callback_query_id:q.id,text:'Sozlamalarni faqat guruh administratori o‘zgartira oladi.',show_alert:true}); return true;
++  }
++  const value=q.data.slice(3);
++  const choices={on:['enabled',1],off:['enabled',0],greet:['welcome',1],quiet:['welcome',0]};
++  const setting=Object.hasOwn(modes,value) ? ['mode',value] : Object.hasOwn(choices,value) ? choices[value] : null;
++  if (!setting) return true;
++  await ready(store.db);
++  const [column,next]=setting;
++  await store.stmt('INSERT INTO group_preferences(chat,'+column+') VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET '+column+'=excluded.'+column,chat.id,next).run();
++  await telegram(env,'answerCallbackQuery',{callback_query_id:q.id,text:'Sozlamalar saqlandi.'});
++  await panel(env,chat.id,await settings(store,chat.id),q.message.message_id);
++  return true;
++}
++async function fingerprint(m) {
++  const media=m.photo?.at(-1) || m.sticker || m.document || m.video || m.animation || m.voice || m.audio;
++  const value=[(m.text || m.caption || '').normalize('NFKC').toLowerCase().trim().replace(/\s+/gu,' '),media?.file_unique_id].filter(Boolean).join('\n');
++  if (!value) return null;
++  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))), b=>b.toString(16).padStart(2,'0')).join('');
++}
++export async function groupMessage(env,store,config,m) {
++  if (!group(m.chat?.type)) return;
++  const chat=m.chat.id, mid=m.message_id, author=m.from?.id;
++  const command=/^\/(antiflood|salom)(?:@([a-z0-9_]+))?(?:\s|$)/i.exec(m.text || '');
++  if (command && (!command[2] || command[2].toLowerCase() === config.name?.toLowerCase()) &&
++      author && !m.sender_chat && admin((await member(env,chat,author)).status)) {
++    if (command[1].toLowerCase() === 'salom') {
++      const value = m.text.slice(command[0].length).trim();
++      if (!value || value.length > 500) {
++        await telegram(env,'sendMessage',{chat_id:chat,text:'500 belgigacha matn yozing. Masalan: /salom Assalomu alaykum, {ism}! {guruh} guruhiga xush kelibsiz.'}); return;
++      }
++      await ready(store.db);
++      await store.stmt('INSERT INTO group_preferences(chat,greeting) VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET greeting=excluded.greeting',chat,value==='reset'?null:value).run();
++    }
++    await panel(env,chat,await settings(store,chat)); return;
++  }
++  const prefs=await settings(store,chat);
++  if (m.new_chat_members) {
++    const names=m.new_chat_members.filter(u=>!u.is_bot).map(u=>u.first_name).filter(Boolean);
++    if (!prefs.welcome || !names.length) return;
++    const fresh=await store.first('INSERT INTO group_activity(chat,mid,author) VALUES(?,?,0) ON CONFLICT DO NOTHING RETURNING mid',chat,mid);
++    const welcome=prefs.greeting || '👋 Assalomu alaykum, {ism}!\n\n{guruh} guruhiga xush kelibsiz. Savolingiz bo‘lsa, bemalol yozing. Bir-birimizga hurmat bilan munosabatda bo‘laylik.';
++    const text=welcome.replace(/\{(ism|guruh)\}/g, (_,key)=>key==='ism'?names.join(', ').slice(0,200):(m.chat.title || 'ARSLAN')).slice(0,4000);
++    if (fresh) await telegram(env,'sendMessage',{chat_id:chat,text,
++      ...(config.name ? {reply_markup:{inline_keyboard:[[{text:'🛍 Do‘konni ochish',url:'https://t.me/'+config.name}]]}} : {})});
++    return;
++  }
++  if (!prefs.enabled || !author || m.sender_chat || m.from.is_bot || m.left_chat_member) return;
++  const hash=await fingerprint(m);
++  const rule=modes[prefs.mode];
++  const results=await store.db.batch([
++    store.stmt('INSERT INTO group_activity(chat,mid,author,fingerprint) VALUES(?,?,?,?) ON CONFLICT DO NOTHING',chat,mid,author,hash),
++    store.stmt(`UPDATE group_activity SET blocked=(SELECT count(*) FILTER (WHERE stamp>unixepoch()-10)>?
++      OR count(*) FILTER (WHERE fingerprint=?)>=? FROM group_activity
++      WHERE chat=? AND author=? AND stamp>unixepoch()-60)
++      WHERE chat=? AND mid=? AND blocked IS NULL`,rule.burst,hash,rule.copies,chat,author,chat,mid),
++    store.stmt('SELECT blocked FROM group_activity WHERE chat=? AND mid=?',chat,mid)
++  ]);
++  if (!results[2].results[0]?.blocked) return;
++  if (admin((await member(env,chat,author)).status)) return;
++  await telegram(env,'deleteMessage',{chat_id:chat,message_id:mid}).catch(e=>{
++    if (![400,403].includes(e.telegramCode)) throw e;
++  });
++}
 diff --git a/src/store.mjs b/src/store.mjs
 index 08f706d..23a2b28 100644
 --- a/src/store.mjs
@@ -471,11 +734,70 @@ index 08f706d..23a2b28 100644
                   FROM payments AS payment
                   LEFT JOIN invoices AS invoice ON invoice.order_payment_id = payment.id
                   WHERE payment.user_id = ? ORDER BY payment.id DESC LIMIT 100`, userId),
+diff --git a/src/support-chat.mjs b/src/support-chat.mjs
+index 974847a..2d89ab3 100644
+--- a/src/support-chat.mjs
++++ b/src/support-chat.mjs
+@@ -65,15 +65,23 @@ async function addUserMessage(env,ctx,store,config,userId,message,key,source='mi
+   const status=await threadState(store,userId);
+   if(status==='closed')throw new RequestError('support_dialog_closed',409);
+   if(status==='new')await openThread(store,userId);
+-  const blocked=await store.first(`SELECT id FROM support_messages
+-    WHERE user_id=? AND role='user' AND created_at>unixepoch()-? LIMIT 1`,userId,source==='telegram'?0:3);
+-  if(blocked)throw new RequestError('support_rate_limited',429);
+-  const count=await store.first(`SELECT COUNT(*) AS count FROM support_messages
+-    WHERE user_id=? AND role='user' AND created_at>unixepoch()-86400`,userId);
+-  if((count?.count??0)>=60)throw new RequestError('support_rate_limited',429);
++  // Apply both limits in the same write, even when Telegram and the Mini App send concurrently.
+   const added=await store.first(`INSERT INTO support_messages(user_id,role,author_id,message,request_key)
+-    VALUES(?,'user',?,?,?) ON CONFLICT(user_id,request_key) DO NOTHING RETURNING id`,userId,userId,text,key);
+-  if(!added)return {duplicate:true};
++    SELECT ?,'user',?,?,? WHERE NOT EXISTS(SELECT 1 FROM support_messages
++      WHERE user_id=? AND role='user' AND created_at>unixepoch()-3)
++      AND (SELECT count(*) FROM support_messages WHERE user_id=? AND role='user'
++        AND created_at>unixepoch()-86400)<60
++    ON CONFLICT(user_id,request_key) DO NOTHING RETURNING id`,userId,userId,text,key,userId,userId);
++  if(!added) {
++    const previous=await store.first('SELECT id FROM support_messages WHERE user_id=? AND request_key=?',userId,key);
++    if(previous)return {id:previous.id,duplicate:true};
++    const limit=await store.first(`SELECT max(1, max(created_at)+3-unixepoch(),
++      CASE WHEN count(*)>=60 THEN min(created_at)+86400-unixepoch() ELSE 0 END) AS wait
++      FROM support_messages WHERE user_id=? AND role='user' AND created_at>unixepoch()-86400`,userId);
++    const error=new RequestError('support_rate_limited',429);
++    error.retryAfter=limit?.wait || 1;
++    throw error;
++  }
+   await store.stmt('UPDATE support_threads SET updated_at=unixepoch() WHERE user_id=?',userId).run();
+   ctx.waitUntil(notifyAdmins(env,store,config,userId,text,added.id));
+   return {id:added.id,duplicate:false};
+@@ -134,7 +142,16 @@ export async function supportCustomerMessage(env,ctx,store,config,message) {
+   try {
+     await addUserMessage(env,ctx,store,config,userId,text,`tg_${userId}_${message.message_id}`,'telegram');
+   } catch(e) {
+-    if(e instanceof RequestError&&e.message==='support_rate_limited')return true;
++    if(e instanceof RequestError&&e.message==='support_rate_limited'){
++      // Give feedback once per cooldown instead of replying to each repeated message.
++      const latest=await store.first("SELECT max(id) AS id FROM support_messages WHERE user_id=? AND role='user'",userId);
++      await store.stmt('CREATE TABLE IF NOT EXISTS support_rate_feedback(user_id INTEGER PRIMARY KEY,last_id INTEGER NOT NULL)').run();
++      const won=await store.first(`INSERT INTO support_rate_feedback(user_id,last_id) VALUES(?,?)
++        ON CONFLICT(user_id) DO UPDATE SET last_id=excluded.last_id
++        WHERE last_id<>excluded.last_id RETURNING user_id`,userId,latest.id);
++      if(won)await telegram(env,'sendMessage',{chat_id:userId,text:`Iltimos, ${e.retryAfter} soniyadan keyin qayta yozing.`});
++      return true;
++    }
+     throw e;
+   }
+   return true;
 diff --git a/src/worker.mjs b/src/worker.mjs
-index 7b304ea..2f1287a 100644
+index 7b304ea..887d01e 100644
 --- a/src/worker.mjs
 +++ b/src/worker.mjs
-@@ -463,8 +463,8 @@ async function handleCommand(env, ctx, store, config, message) {
+@@ -1,3 +1,4 @@
++import { groupMessage, groupCallback, expireGroupActivity } from './group-chat.mjs';
+ import {
+   catalog, CALIBRATION_LEGEND_PRICE, formatAmount, integer, MAX_AMOUNT, MAX_STARS,
+   MIN_BOOST_PRICE, MODE_SURCHARGE, MODES, PRICES, productTitle, RANKS, RequestError,
+@@ -463,8 +464,8 @@ async function handleCommand(env, ctx, store, config, message) {
        if (!url) throw new RequestError('miniapp_url_required',503);
        if(command==='/start')await bindPartner(store,message.from.id,args[0]);
        const inline_keyboard=[[{text:'🚀 Mini App’ni ochish',web_app:{url}}]];
@@ -486,12 +808,43 @@ index 7b304ea..2f1287a 100644
        const photo=new URL('assets/start-welcome-v6.jpg',url).href;
        try {
          return await telegram(env,'sendPhoto',{chat_id:chatId,photo,caption:customGreeting,
+@@ -815,10 +816,12 @@ async function handleWebhook(request, env, ctx, store, config) {
+   } else if (update.message?.successful_payment && update.message.chat?.type === "private") {
+     await handlePaid(env, ctx, store, update.message);
+   } else if (update.callback_query) {
+-    await handleCallback(env, ctx, store, config, update.callback_query);
++    if (!await groupCallback(env,store,update.callback_query)) await handleCallback(env, ctx, store, config, update.callback_query);
+   } else if (update.business_message && bankChatUpdates(env)) {
+     const event = await receiveBankChat(env, store, config.admin, update.business_message);
+     notifyTransfer(env, ctx, store, event);
++  } else if (['group','supergroup'].includes(update.message?.chat?.type)) {
++    await groupMessage(env,store,config,update.message);
+   } else if (update.message?.chat?.type === "private" && update.message.from?.id && update.message.text) {
+     const msg=update.message;
+     if (await handleCostReply(env, store, msg)) return new Response('OK');
+@@ -974,7 +977,7 @@ export default {
+       if (error instanceof RequestError) {
+         if (path === "/setup") return setupPage("<p>Ошибка подключения. Проверь токен и сеть бота.</p>", error.status);
+         if (path === "/telegram" && error.telegramCode === 403) return new Response("OK");
+-        return json({ error: error.message }, error.status);
++        return json({ error: error.message, ...(error.retryAfter ? {retryAfter:error.retryAfter} : {}) }, error.status);
+       }
+       console.error("ARSLAN BOOST Worker failed");
+       return json({ error: "service_unavailable" }, 503);
+@@ -987,6 +990,7 @@ export default {
+     if (config.webhookReady && (env.SYNC_TELEGRAM_MENU === "1" || config.enabled || bankChatUpdates(env))) {
+       background(ctx, syncTelegramEntry(env, store, config));
+     }
++    background(ctx,expireGroupActivity(store));
+     if (!telegramId(env.ADMIN_ID)) return;
+     if (["private", "manual"].includes(env.P2P_MODE)) background(ctx, p2pCron(store, env));
+     background(ctx, (async () => {
 diff --git a/tests/catalog-browser.py b/tests/catalog-browser.py
 new file mode 100644
-index 0000000..9df07b8
+index 0000000..4e41392
 --- /dev/null
 +++ b/tests/catalog-browser.py
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,144 @@
 +"""Mobile storefront regression tests against a local release, with isolated order fixtures."""
 +import json
 +import os
@@ -553,6 +906,12 @@ index 0000000..9df07b8
 +        expect(page.locator("#product-detail")).to_have_value("12345678")
 +        expect(page.locator("#selected-price")).to_have_text("—")
 +        expect(page.locator("#product-next")).to_be_disabled()
++    stepper = page.locator('[data-pack="100"]')
++    stepper.locator('.pack-plus').click()
++    expect(stepper.locator('.pack-count')).to_have_text("1")
++    expect(page.locator(".checkout-total")).to_contain_text("24")
++    stepper.locator('.pack-minus').click()
++    expect(page.locator("#product-next")).to_be_disabled()
 +    page.locator('[data-option="100"]').first.click()
 +    expect(page.locator("#product-next")).to_be_enabled()
 +    page.locator("#product-next").click()
@@ -644,10 +1003,18 @@ index e53ec7d..b464d68 100644
      all:selector=>selector==='[data-history]'?tabs:selector==='#filters [data-history-filter]'?filters:[],
      glyph:()=>'<svg class="glyph"></svg>',
 diff --git a/tests/p2p.test.mjs b/tests/p2p.test.mjs
-index d012190..4d46b25 100644
+index d012190..4107c26 100644
 --- a/tests/p2p.test.mjs
 +++ b/tests/p2p.test.mjs
-@@ -1888,7 +1888,7 @@ test('/start has a horizontal Uzbek photo and exactly one Mini App button',async
+@@ -1851,6 +1851,7 @@ test('Closed Telegram support refuses casual messages and requires new conversat
+   await sys.webhook({callback_query:{id:'new-chat-customer',data:'support:new',from:{id:11},
+     message:{chat:{type:'private',id:11}}}});
+   assert.equal((await sys.api(11,'support/history')).data.open,true);
++  sys.db.prepare('UPDATE support_messages SET created_at=created_at-4 WHERE user_id=11').run();
+   await sys.webhook({message:{chat:{type:'private',id:11},from:{id:11},message_id:45,text:'Help again'}});
+   assert.equal((await sys.api(11,'support/history')).data.messages.length,2);
+   await sys.drain();
+@@ -1888,7 +1889,7 @@ test('/start has a horizontal Uzbek photo and exactly one Mini App button',async
    assert.match(greeting.body.caption,/5404614161831341267/);
    assert.match(greeting.body.caption,/5404812288672703936/);
    assert.match(greeting.body.caption,/5123093405064234078/);
@@ -656,6 +1023,58 @@ index d012190..4d46b25 100644
    assert.equal(greeting.body.parse_mode,'HTML');
    assert.match(greeting.body.photo,/\/assets\/start-welcome-v6\.jpg$/);
    const buttons=greeting.body.reply_markup.inline_keyboard.flat();
+@@ -2155,3 +2156,51 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
+   const current=(await sys.api(1,`invoice/${placed.data.invoiceId}/status`,null,'GET')).data;
+   assert.equal(current.expiresAt-current.createdAt,600);
+ });
++
++test('Group settings require local administrators and isolate spam, welcome and retries',async t=>{
++  const calls=[];
++  t.mock.method(globalThis,'fetch',async(url,options)=>{
++    const method=url.split('/').at(-1), body=JSON.parse(options.body);
++    calls.push({method,body});
++    const admin=[40,900000].includes(body.user_id);
++    const result=method==='getChatMember'?{status:admin?'administrator':'member',can_delete_messages:admin}:{message_id:55};
++    return Response.json({ok:true,result});
++  });
++  const sys=app(), chat={type:'supergroup',id:-100100,title:'Arslan'};
++  let seq=0;
++  const message=(from,text,extra={})=>sys.webhook({message:{chat,from:{id:from},message_id:++seq,text,...extra}});
++  const click=(from,value)=>sys.webhook({callback_query:{id:String(++seq),from:{id:from},data:'af:'+value,message:{chat,message_id:10}}});
++  const deleted=()=>calls.filter(x=>x.method==='deleteMessage').map(x=>x.body.message_id);
++  assert.equal((await message(40,'/antiflood')).status,200);
++  await click(21,'on');
++  assert.equal(sys.db.prepare('SELECT count(*) AS n FROM group_preferences').get().n,0);
++  await click(40,'on');
++  for(let i=0;i<3;i++)assert.equal((await message(21,'  Salom  ')).status,200);
++  assert.deepEqual(deleted(),[seq]);
++  await message(22,'Salom'); assert.equal(deleted().length,1);
++  await click(40,'strict');
++  for(let i=0;i<4;i++) await message(27,'Xabar '+i);
++  assert.equal(deleted().at(-1),seq);
++  const size=deleted().length;
++  for(let i=0;i<6;i++) await message(40,'bir xil');
++  assert.equal(deleted().length,size);
++  await click(40,'greet'); await message(40,'/salom Salom, {ism}! {guruh}');
++  const join={chat,from:{id:30},message_id:++seq,new_chat_members:[{id:30,first_name:'Ali'}]};
++  await sys.webhook({message:join});await sys.webhook({message:join});
++  assert.equal(calls.filter(x=>x.body.text==='Salom, Ali! Arslan').length,1);
++  await click(40,'off'); await message(21,'Salom'); assert.equal(deleted().length,size);
++});
++test('Support applies the same cooldown to Telegram and mini app and keeps retries idempotent',async t=>{
++  const responses=[];
++  t.mock.method(globalThis,'fetch',async(url,opts)=>{responses.push(JSON.parse(opts.body));return Response.json({ok:true,result:{message_id:20}});});
++  const sys=app();
++  const first={message:'Salom',requestId:'first-cross-10'};
++  assert.equal((await sys.api(11,'support/send',first)).status,200);
++  for(const id of [41,42])await sys.webhook({message:{chat:{type:'private',id:11},from:{id:11},text:'Yana',message_id:id}});
++  const blocked=await sys.api(11,'support/send',{message:'Yana',requestId:'second-cross-10'});
++  assert.equal(blocked.status,429); assert.ok(blocked.data.retryAfter>=1 && blocked.data.retryAfter<=3);
++  assert.equal((await sys.api(11,'support/send',first)).data.duplicate,true);
++  assert.equal((await sys.api(11,'support/history')).data.messages.length,1);
++  assert.equal(responses.filter(x=>x.chat_id===11 && /soniyadan keyin/.test(x.text)).length,1);
++  await sys.drain();
++});
 diff --git a/tests/product-v10.test.mjs b/tests/product-v10.test.mjs
 index 7e60db4..51c4353 100644
 --- a/tests/product-v10.test.mjs
