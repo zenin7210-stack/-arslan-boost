@@ -587,13 +587,121 @@ index 2ed7b5a..bd4e3e3 100644
 -  <script src="app.js?v=20261120-v9"></script>
 +  <script src="app.js?v=catalog11-chat13"></script>
  </body></html>
+diff --git a/src/chat-snow.mjs b/src/chat-snow.mjs
+new file mode 100644
+index 0000000..f65288e
+--- /dev/null
++++ b/src/chat-snow.mjs
+@@ -0,0 +1,100 @@
++// Near-term snowfall for the chat's most common Uzbek locations. Coordinates are city centres.
++const places = [
++  [/t[oa]shkent|ташкент|тошкент/iu,'Toshkent','Ташкент',41.3111,69.2797],
++  [/samarqand|samarkand|самарканд|самарқанд/iu,'Samarqand','Самарканд',39.6542,66.9597],
++  [/buxoro|bukhara|бухар|бухоро/iu,'Buxoro','Бухара',39.7747,64.4286],
++  [/andijon|andijan|андижан|андижон/iu,'Andijon','Андижан',40.7834,72.3501],
++  [/namangan|наманган/iu,'Namangan','Наманган',40.9983,71.6726],
++  [/far[g‘’ʻʼ'`]+ona|fergana|ферган|фарғона/iu,'Farg‘ona','Фергана',40.3842,71.7843],
++  [/nukus|нукус/iu,'Nukus','Нукус',42.4619,59.6166],
++  [/chimgan|chimyon|чимган|чимён/iu,'Chimyon','Чимган',41.5625,70.0247],
++  [/qarshi|карши|қарши/iu,'Qarshi','Карши',38.861,65.7847],
++  [/termiz|termez|терм[еи]з/iu,'Termiz','Термез',37.2242,67.2783],
++  [/jizzax|джизак|жиззах/iu,'Jizzax','Джизак',40.1158,67.8422],
++  [/navoiy|навои/iu,'Navoiy','Навои',40.1039,65.3688],
++  [/urganch|урганч|ургенч/iu,'Urganch','Ургенч',41.5507,60.6315]
++];
++export const weatherCredit='MET Norway · CC BY 4.0';
++const cityQuestion={ru:'В каком городе?',uz:'Qaysi shaharda?'};
++const snow=/(?:^|[^\p{L}])(?:qor(?:lar)?|қор|кор|снег(?:а|у|опад)?)(?![\p{L}])/iu;
++const nearTerm=/qachon|ка[чш]он|қачон|yog[‘’ʻʼ'`]?ad|yog[‘’ʻʼ'`]?ishi|yog[‘’ʻʼ'`]?isht|ёғад|ёгад|bugun|ertaga|когда|будет|выпадет|пойд[её]т|ожидается|завтра|сегодня/iu;
++const general=/odatda|обычно|тает|растает|сколько сантиметр|почему|обыча|eriydi|eriyapti|necha santimetr|истори|раньше|выпал(?:\s|$)|выпадал|почему|прошл|o[‘’ʻʼ'`]tgan|o‘tgan|qishda|зимой|первый снег в мире|\b(?:19|20)\d{2}\b/iu;
++const placeFor=q=>places.find(([pattern])=>pattern.test(q));
++const cityOnly=q=>q.trim().split(/\s+/).length<=4 && !!placeFor(q) && !/[!?].+\p{L}/u.test(q);
++
++export function snowRequest(q,history) {
++  if(general.test(q)) return null;
++  const previous=history.at(-1)?.content;
++  const askedCity=previous===cityQuestion.uz || previous===cityQuestion.ru;
++  if(askedCity && cityOnly(q)) return {place:placeFor(q),q:[history.at(-2)?.content,q].join(' '),followup:true};
++  if(askedCity && history.at(-2)?.role==='user' && snow.test(history.at(-2).content) && /^[\p{L}‘’'-]+(?:\s+[\p{L}‘’'-]+)?[.!]?$/u.test(q)) return {unknown:true,followup:true};
++  if(!snow.test(q) || !nearTerm.test(q)) return null;
++  return {place:placeFor(q),q};
++}
++
++const localDay=stamp=>new Date(stamp+5*3600000).toISOString().slice(0,10);
++const dateLabel=(stamp,lang)=>new Intl.DateTimeFormat(lang==='uz'?'uz-Latn':'ru',{day:'numeric',month:'long',timeZone:'Asia/Tashkent'}).format(stamp);
++
++async function forecast(store,place) {
++  const [,key,,lat,lon]=place;
++  const now=Math.floor(Date.now()/1000);
++  const row=await store.first('SELECT points,expires,modified FROM group_snow_forecasts WHERE city=?',key);
++  if(row?.expires>now) return row.points ? JSON.parse(row.points) : null;
++  const lock=await store.first(`INSERT INTO group_snow_forecasts(city,expires) VALUES(?,?)
++    ON CONFLICT(city) DO UPDATE SET expires=excluded.expires WHERE expires<=? RETURNING city`,key,now+5,now);
++  if(!lock) return null;
++  try {
++    const response=await fetch('https://api.met.no/weatherapi/locationforecast/2.0/compact?lat='+lat+'&lon='+lon,{
++      headers:{'User-Agent':'ArslanChat/1.0 https://t.me/arslanboostbot',...(row?.modified?{'If-Modified-Since':row.modified}:{})},
++      signal:AbortSignal.timeout(3000)
++    });
++    const expires=Math.max(now+600,Math.ceil((Date.parse(response.headers.get('expires')) || 0)/1000));
++    if(response.status===304 && row?.points){
++      await store.stmt('UPDATE group_snow_forecasts SET expires=? WHERE city=?',expires,key).run();
++      return JSON.parse(row.points);
++    }
++    if(!response.ok) throw Error('forecast unavailable');
++    const payload=await response.json();
++    const issued=Date.parse(payload.properties?.meta?.updated_at);
++    if(!Number.isFinite(issued) || Math.abs(Date.now()-issued)>18*3600000) throw Error('old forecast');
++    const points=[];
++    for(const step of payload.properties.timeseries){
++      const start=Date.parse(step.time);
++      const hours=step.data?.next_1_hours?.summary ? 1 : 6;
++      const symbol=step.data?.['next_'+hours+'_hours']?.summary?.symbol_code;
++      if(Number.isFinite(start) && symbol) points.push([start,start+hours*3600000,symbol.includes('snow')]);
++    }
++    if(!points.length) throw Error('empty forecast');
++    await store.stmt('UPDATE group_snow_forecasts SET points=?,expires=?,modified=? WHERE city=?',
++      JSON.stringify(points),expires,response.headers.get('last-modified'),key).run();
++    return points;
++  } catch {
++    await store.stmt('UPDATE group_snow_forecasts SET points=NULL,modified=NULL,expires=? WHERE city=?',now+60,key).run();
++    return null;
++  }
++}
++
++export async function snowAnswer(store,request,lang,now=Date.now()){
++  const {place,q}=request;
++  if(request.unknown) return lang==='ru'?'Для этого города у меня нет проверенного прогноза.':'Bu shahar uchun menda tekshirilgan prognoz yo‘q.';
++  if(!place) return cityQuestion[lang];
++  const city=place[lang==='ru'?2:1];
++  const unavailable=lang==='ru'?'Не удалось проверить прогноз для города '+city+'.':city+' uchun prognozni tekshira olmadim.';
++  
++  const today=localDay(now);
++  const tomorrow=localDay(now+86400000);
++  const target=/ertaga|эртага|завтра/iu.test(q)?tomorrow:/bugun|бугун|сегодня/iu.test(q)?today:null;
++  if(/послезавтра|indin|индин|через|hafta|понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье|декабр|январ|феврал|dekabr|yanvar|fevral|\d\s*(?:январ|феврал|март|апрел|май|июн|июл|август|сентябр|октябр|ноябр|декабр)|\d+[./-]\d+/iu.test(q))
++    return lang==='ru'?'Могу проверить ближайший снег, сегодня или завтра. За какой период посмотреть?':'Eng yaqin qor, bugun yoki ertaga uchun tekshira olaman. Qaysi biri kerak?';
++  const points=await forecast(store,place);
++  if(!points) return unavailable;
++  const rows=points.filter(([a,b])=>b>now && (!target || localDay(Math.max(a,now))<=target && localDay(b-1)>=target));
++  if(!rows.length) return unavailable;
++  const hit=rows.find(r=>r[2]);
++  const when=hit?dateLabel(target ? Date.parse(target+'T12:00:00+05:00') : Math.max(now,hit[0]),lang)
++    :dateLabel(rows.at(-1)[1]-1,lang);
++  const label=target?dateLabel(Date.parse(target+'T12:00:00+05:00'),lang):when;
++  const text=lang==='ru' ? city+' — '+(hit?'по прогнозу снег возможен '+when+'.':target?label+' снег не ожидается.':'в прогнозе до '+when+' снега нет.')
++    : city+' — '+(hit?when+' kuni qor yog‘ishi mumkin.':target?label+' kuni qor kutilmayapti.':when+'gacha prognozda qor yo‘q.');
++  return text+'\n'+weatherCredit;
++}
 diff --git a/src/group-ai.mjs b/src/group-ai.mjs
 new file mode 100644
-index 0000000..5c732ad
+index 0000000..3b10001
 --- /dev/null
 +++ b/src/group-ai.mjs
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,208 @@
 +import { telegram, botToken } from './telegram.mjs';
++
++import {snowRequest, snowAnswer, weatherCredit} from './chat-snow.mjs';
 +
 +const mainModel = '@cf/openai/gpt-oss-120b';
 +const backupModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
@@ -611,6 +719,34 @@ index 0000000..5c732ad
 +  if (/[ўқғҳ]|(?:салом|нима|қанча|канча|керак|рахмат|менга|яхши|сизга|калесан|бўлади|килиб|учун|булди|неча|киласиз)/u.test(s)) return 'uz';
 +  if (/[а-яё]{2,}/u.test(s) || /\b(?:privet|skolko|pochemu|spasibo|kak dela)\b/.test(s)) return 'ru';
 +  return /[a-z]{2,}/i.test(s) ? 'uz' : previous || 'uz';
++}
++
++const calendar=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tashkent',year:'numeric',month:'2-digit',day:'2-digit'});
++
++function dateAnswer(question,lang,instant) {
++  const q=question.toLowerCase().replace(/[‘’ʻʼ`]/g,"'").replace(/[?.!,]+$/u,'').trim();
++  const year=calendar.formatToParts(instant).find(p=>p.type==='year').value;
++  if(/^(?:(?:а )?какой (?:сейчас |сегодня )?год(?: сейчас| сегодня)?|(?:hozir |bugun )?(?:qaysi|nechanchi|nechinchi) yil(?: hozir)?|(?:ҳозир |хозир |бугун )?(?:қайси|кайси|нечанчи) йил|what year is it)$/iu.test(q)) return year+(lang==='ru'?' год.':'-yil.');
++  if(/^(?:какое (?:сегодня )?число(?: сегодня)?|(?:какая |какова )?(?:сегодняшняя дата|сегодня дата|дата сегодня)|сегодня какое число|(?:bugun(?:gi)? )?(?:sana|nechanchi sana|nechanchi|qaysi sana)|bugun oyning (?:nechanchi|nechanchisi)|бугун (?:сана|нечанчи))$/iu.test(q))
++    return new Intl.DateTimeFormat(lang==='ru'?'ru':'uz-Latn',{timeZone:'Asia/Tashkent',year:'numeric',month:'long',day:'numeric'}).format(instant);
++  if(/^(?:сколько тебе лет|тебе сколько лет|(?:sen(?:ing)? |siz(?:ning)? )?(?:necha yoshdasan|necha yoshdasiz|yoshing nechida|yoshingiz nechida)|сен неча ёшдасан)$/iu.test(q))
++    return lang==='ru'?'Я бот, у меня нет возраста.':'Men botman, yoshim yo‘q.';
++  return null;
++}
++
++function wantsDetail(question) {
++  return /подробн|разв[её]рнуто|пошагов|по шагам|batafsil|qadam(?:ma|-ba| bilan)|муфассал|батафсил|in detail|step by step/iu.test(question);
++}
++
++function concise(text,detailed) {
++  if(detailed || !text || text.includes('```')) return text;
++  const sentences=Array.from(new Intl.Segmenter('ru',{granularity:'sentence'}).segment(text),s=>s.segment.trim()).filter(Boolean);
++  const kept=[];
++  for(const sentence of sentences){
++    if(kept.length===2 || kept.length && kept.join(' ').length+sentence.length>310) break;
++    kept.push(sentence);
++  }
++  return kept.join(' ') || text;
 +}
 +
 +function basicAnswer(text,lang) {
@@ -659,7 +795,7 @@ index 0000000..5c732ad
 +}
 +
 +function messagesFor(question,history,lang) {
-+  const policy='You are Arslan, a helpful participant in the ARSLAN CHAT Telegram group. Answer the actual question directly, naturally and accurately. Use short plain-text paragraphs. Russian input gets natural Russian. Uzbek input (Latin, Cyrillic or informal Uzbek) gets natural Uzbek in Latin script unless a different script is requested. Follow explicit language requests. Uzbek is the default for ambiguous input. For a greeting greet naturally. For a follow-up use only the conversation supplied. Do not invent prices, game IDs, order status, access, or completed actions. If the user asks, the shop is @arslansavdo and the admin is @khblyv. Do not advertise in unrelated answers.';
++  const policy='You are Arslan, a helpful participant in the ARSLAN CHAT Telegram group. Answer the actual question directly, naturally and accurately. Default to ONE direct sentence, at most two short sentences (aim for 12–30 words). No intro, filler, unsolicited background, region-by-region lists or follow-up offers. If the user explicitly asks for details, provide them. If a needed fact is missing, ask only one targeted question. Current date in Asia/Tashkent: '+calendar.format(new Date())+'. Never present a training year as the current year. Distinguish historical questions from current ones. For live facts (news, exchange rates, game updates), use only verified fresh data provided in this request. Otherwise say briefly you cannot confirm the current value; for a current UZS rate point to cbu.uz. Never guess dates, rates or personal ages from the current year. Russian input gets natural Russian. Uzbek input (Latin, Cyrillic or informal Uzbek) gets natural Uzbek in Latin script unless a different script is requested. Follow explicit language requests. Uzbek is the default for ambiguous input. For a greeting greet naturally. For a follow-up use only the conversation supplied. Do not invent prices, game IDs, order status, access, or completed actions. If the user asks, the shop is @arslansavdo and the admin is @khblyv. Do not advertise in unrelated answers.';
 +  return [{role:'system',content:policy+' Likely answer language: '+(lang==='ru'?'Russian.':'Uzbek.')},
 +    ...history,{role:'user',content:question}];
 +}
@@ -674,12 +810,13 @@ index 0000000..5c732ad
 +}
 +
 +async function inference(env,messages) {
++  const detailed=wantsDetail(messages.at(-1).content);
 +  for (const model of [mainModel,backupModel]) {
 +    let timer;
 +    try {
-+      const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('inference_timeout')),15000);});
-+      const result=await Promise.race([env.AI.run(model,{messages,max_tokens:900,temperature:0.35}),timeout]);
-+      const text=finalText(result);
++      const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('inference_timeout')),model===mainModel ? (detailed?12000:6500) : 4500);});
++      const result=await Promise.race([env.AI.run(model,{messages,max_tokens:detailed?720:320,temperature:0.25,...(model===mainModel?{reasoning_effort:'low'}:{})}),timeout]);
++      const text=concise(finalText(result),detailed);
 +      if (text) return {text,model};
 +      console.warn('Arslan group AI: empty output',model);
 +    } catch (error) {
@@ -698,15 +835,17 @@ index 0000000..5c732ad
 +  const prior=reply?.message_id ? await store.first(`SELECT history,lang FROM group_ai_replies WHERE chat=? AND sent_mid=? AND author=? AND stamp>unixepoch()-600`,
 +    chat,reply.message_id,author) : null;
 +  const history=prior?.history ? JSON.parse(prior.history) : reply?.text ? [{role:'assistant',content:reply.text.slice(0,900)}] : [];
-+  const lang=language(question,prior?.lang);
-+  const quick=basicAnswer(question,lang);
++  let lang=language(question,prior?.lang);
++  const quick=dateAnswer(question,lang,new Date()) ?? basicAnswer(question,lang);
++  const snow=quick===null ? snowRequest(question,history) : null;
++  if(snow?.followup && prior?.lang) lang=prior.lang;
 +  const owner=crypto.randomUUID();
 +  const results=await store.db.batch([
 +    store.stmt(`INSERT INTO group_ai_replies(chat,mid,author,lang,mode)
 +      SELECT ?,?,?,?,CASE WHEN ?=1 THEN 'local'
 +        WHEN (SELECT count(*) FROM group_ai_replies WHERE chat=? AND author=? AND stamp>unixepoch()-60 AND mode='ai')>=12
 +          OR (SELECT count(*) FROM group_ai_replies WHERE chat=? AND stamp>unixepoch()-60 AND mode='ai')>=50 THEN 'wait'
-+        ELSE 'ai' END ON CONFLICT DO NOTHING`,chat,mid,author,lang,Number(quick!==null),chat,author,chat),
++        ELSE 'ai' END ON CONFLICT DO NOTHING`,chat,mid,author,lang,Number(quick!==null || !!snow),chat,author,chat),
 +    store.stmt(`UPDATE group_ai_replies SET lease=unixepoch()+45,owner=?
 +      WHERE chat=? AND mid=? AND sent_mid IS NULL AND lease<=unixepoch() RETURNING mode,answer,history`,owner,chat,mid)
 +  ]);
@@ -716,14 +855,19 @@ index 0000000..5c732ad
 +    let answer=job.answer;
 +    if (!answer) {
 +      const result=job.mode==='ai' ? await inference(env,messagesFor(question,history,lang)) : null;
-+      answer=job.mode==='wait' ? strings[lang].wait : quick ?? result?.text ?? strings[lang].unavailable;
-+      const next=job.mode!=='wait' && (quick!==null || result) ?
++      answer=job.mode==='wait' ? strings[lang].wait : quick ?? (snow ? await snowAnswer(store,snow,lang) : result?.text) ?? strings[lang].unavailable;
++      const next=job.mode!=='wait' && (quick!==null || snow || result) ?
 +        [...history,{role:'user',content:question},{role:'assistant',content:answer}].slice(-6).map(x=>({...x,content:x.content.slice(0,900)})) : history;
 +      const saved=await store.first('UPDATE group_ai_replies SET answer=?,history=? WHERE chat=? AND mid=? AND owner=? RETURNING mid',
 +        answer,JSON.stringify(next),chat,mid,owner);
 +      if (!saved) return;
 +    }
++    const source = answer.endsWith('\n'+weatherCredit) ? answer.lastIndexOf(weatherCredit) : -1;
 +    const sent=await telegram(env,'sendMessage',{chat_id:chat,text:answer,
++      ...(source>=0 ? {entities:[
++        {type:'text_link',offset:source,length:10,url:'https://www.met.no/en'},
++        {type:'text_link',offset:source+13,length:9,url:'https://creativecommons.org/licenses/by/4.0/'}
++      ]}:{}),
 +      reply_parameters:{message_id:mid,allow_sending_without_reply:true},
 +      ...(m.message_thread_id?{message_thread_id:m.message_thread_id}:{})});
 +    await store.stmt('UPDATE group_ai_replies SET sent_mid=?,lease=0 WHERE chat=? AND mid=? AND owner=?',sent.message_id,chat,mid,owner).run();
@@ -735,28 +879,40 @@ index 0000000..5c732ad
 +
 +// Verify the deployed AI binding once per chat release using public test questions only.
 +// Health requests only read these results and cannot trigger inference.
-+export const aiRevision='bilingual-15';
++export const aiRevision='concise-16';
 +export async function verifyGroupModels(env,store) {
 +  if (!env.AI || env.TELEGRAM_TEST_ENV!=='0') return;
 +  const claim=await store.first(`INSERT INTO group_ai_checks(revision,attempts,stamp) VALUES(?,1,unixepoch())
 +    ON CONFLICT(revision) DO UPDATE SET attempts=attempts+1,stamp=unixepoch()
 +    WHERE (ru=0 OR uz=0) AND attempts<3 AND stamp<=unixepoch()-45 RETURNING ru,uz`,aiRevision);
 +  if (!claim) return;
++  if (claim.ru===0 && claim.uz===0) {
++    const start=Date.now();
++    const example='Toshkentda qor qachon yogadi?';
++    const preview=await snowAnswer(store,snowRequest(example,[]),'uz');
++    await store.stmt('INSERT OR REPLACE INTO group_ai_timings(revision,lang,elapsed,size) VALUES(?,?,?,?)',
++      aiRevision,'snow',Date.now()-start,preview.endsWith(weatherCredit)?preview.length:0).run();
++  }
 +  const probes=[['ru','Зачем в шахматах контролировать центр? Ответь одним предложением.'],
 +    ['uz','Shaxmatda markazni nazorat qilish nega foydali? Bir jumlada javob bering.']];
 +  for (const [lang,question] of probes) {
 +    if (claim[lang]) continue;
++    const started=Date.now();
 +    const answer=await inference(env,messagesFor(question,[],lang));
++    const elapsed=Date.now()-started;
 +    const ok=lang==='ru' ? /[а-яё]{3,}/i.test(answer?.text || '') : /(?:shaxmat|markaz|nazorat|donal|harakat|imkon|yurish|raqib|hujum)/i.test(answer?.text || '');
-+    if(ok) await store.stmt('UPDATE group_ai_checks SET '+lang+'=1,'+lang+'_model=? WHERE revision=?',answer.model,aiRevision).run();
++    if(ok && answer.text.length<=320) await store.db.batch([
++      store.stmt('INSERT OR REPLACE INTO group_ai_timings(revision,lang,elapsed,size) VALUES(?,?,?,?)',aiRevision,lang,elapsed,answer.text.length),
++      store.stmt('UPDATE group_ai_checks SET '+lang+'=1,'+lang+'_model=? WHERE revision=?',answer.model,aiRevision)
++    ]);
 +  }
 +}
 diff --git a/src/group-chat.mjs b/src/group-chat.mjs
 new file mode 100644
-index 0000000..5fabbb6
+index 0000000..5b7ff37
 --- /dev/null
 +++ b/src/group-chat.mjs
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,182 @@
 +import { telegram, botToken } from './telegram.mjs';
 +import { welcomeMembers, deleteDueWelcomes, importWelcome } from './group-welcome.mjs';
 +import { answerGroupQuestion, verifyGroupModels, aiRevision } from './group-ai.mjs';
@@ -777,16 +933,22 @@ index 0000000..5fabbb6
 +      'CREATE INDEX IF NOT EXISTS group_ai_reply_id ON group_ai_replies(chat,sent_mid)',
 +      'CREATE INDEX IF NOT EXISTS group_ai_expiry ON group_ai_replies(stamp)',
 +      'CREATE TABLE IF NOT EXISTS group_ai_checks(revision TEXT PRIMARY KEY, attempts INTEGER,stamp INTEGER,ru INTEGER DEFAULT 0,uz INTEGER DEFAULT 0,ru_model TEXT,uz_model TEXT)',
++      'CREATE TABLE IF NOT EXISTS group_ai_timings(revision TEXT,lang TEXT,elapsed INTEGER,size INTEGER,PRIMARY KEY(revision,lang))',
++      'CREATE TABLE IF NOT EXISTS group_snow_forecasts(city TEXT PRIMARY KEY,points TEXT,expires INTEGER,modified TEXT)',
 +      'CREATE TABLE IF NOT EXISTS group_welcomes(chat INTEGER,author INTEGER,joined INTEGER,mid INTEGER,due INTEGER,PRIMARY KEY(chat,author,joined))',
 +      'CREATE INDEX IF NOT EXISTS group_welcome_due ON group_welcomes(due) WHERE due IS NOT NULL'
 +    ];
-+    initialized.set(db, (async () => { for (const s of sql) await db.prepare(s).run(); })().catch(e => { initialized.delete(db); throw e; }));
++    // Fixed, idempotent schema setup in one D1 round trip per cold binding.
++    initialized.set(db, db.exec(sql.join(';\n')).catch(e => { initialized.delete(db); throw e; }));
 +  }
 +  return initialized.get(db);
 +}
 +export async function groupAIStatus(store) {
 +  await ready(store.db);
-+  return await store.first('SELECT revision,ru,uz,ru_model,uz_model,attempts FROM group_ai_checks WHERE revision=?',aiRevision) ||
++  return await store.first(`SELECT c.revision,ru,uz,ru_model,uz_model,attempts,r.elapsed ru_ms,u.elapsed uz_ms,r.size ru_chars,u.size uz_chars,w.size snow_chars
++    FROM group_ai_checks c LEFT JOIN group_ai_timings r ON r.revision=c.revision AND r.lang='ru'
++    LEFT JOIN group_ai_timings u ON u.revision=c.revision AND u.lang='uz'
++    LEFT JOIN group_ai_timings w ON w.revision=c.revision AND w.lang='snow' WHERE c.revision=?`,aiRevision) ||
 +    { revision: aiRevision, ru:0, uz:0, attempts:0 };
 +}
 +export async function expireGroupActivity(env,store) {
@@ -1402,9 +1564,18 @@ index e53ec7d..b464d68 100644
      all:selector=>selector==='[data-history]'?tabs:selector==='#filters [data-history-filter]'?filters:[],
      glyph:()=>'<svg class="glyph"></svg>',
 diff --git a/tests/p2p.test.mjs b/tests/p2p.test.mjs
-index d012190..81df242 100644
+index d012190..b5c10b4 100644
 --- a/tests/p2p.test.mjs
 +++ b/tests/p2p.test.mjs
+@@ -25,7 +25,7 @@ function mockD1(beforeExactAmounts, beforeOrderGuard) {
+       run: async () => ({ meta: stmt.run(...args) }),
+     };
+   }
+-  return { db, prepare, async batch(statements) {
++  return { db, prepare, async exec(sql) { db.exec(sql); }, async batch(statements) {
+     db.exec("BEGIN IMMEDIATE");
+     try {
+       const results = [];
 @@ -505,7 +505,7 @@ test("the scheduled deployment updates the default chat button once", async t =>
      getMe: { username: "arslan_test_bot", has_main_web_app: true },
      getChatMenuButton: { type: "web_app", text: "Shop", web_app: { url: "https://example.net/old" } },
@@ -1468,7 +1639,7 @@ index d012190..81df242 100644
    assert.equal(greeting.body.parse_mode,'HTML');
    assert.match(greeting.body.photo,/\/assets\/start-welcome-v6\.jpg$/);
    const buttons=greeting.body.reply_markup.inline_keyboard.flat();
-@@ -2155,3 +2157,140 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
+@@ -2155,3 +2157,181 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
    const current=(await sys.api(1,`invoice/${placed.data.invoiceId}/status`,null,'GET')).data;
    assert.equal(current.expiresAt-current.createdAt,600);
  });
@@ -1608,6 +1779,47 @@ index d012190..81df242 100644
 +  await message('/ai Почему?');assert.equal(last(),'Zaxira javobi.');
 +  const check=await sys.send('/healthz?chat_ai=1',null,{},'GET');
 +  assert.equal(check.data.attempts,0);
++});
++
++test('chat answers the local year, keeps historical context and checks snowfall after asking for a city',async t=>{
++  const outgoing=[],prompts=[];
++  let next=400,seq=0,weatherCalls=0;
++  const sys=app({AI:{run:async(_model,input)=>{
++    prompts.push(input);
++    return {response:'Один ответ. Вторая фраза. Третья фраза. Четвертая фраза.'};
++  }}});
++  t.mock.method(globalThis,'fetch',async(url,init)=>{
++    if(url.startsWith('https://api.met.no/')){
++      weatherCalls++;
++      const now=Date.now();
++      return Response.json({properties:{meta:{updated_at:new Date(now).toISOString()},timeseries:[
++        {time:new Date(now+3600000).toISOString(),data:{next_1_hours:{summary:{symbol_code:'snow'}}}}
++      ]}},{headers:{expires:new Date(now+3600000).toUTCString()}});
++    }
++    const method=url.split('/').at(-1),body=JSON.parse(init.body);
++    if(method==='getChatMember')return Response.json({ok:true,result:{status:'administrator',can_restrict_members:true,can_delete_messages:true}});
++    if(method==='sendMessage')outgoing.push(body);
++    return Response.json({ok:true,result:{message_id:++next}});
++  });
++  const chat={type:'supergroup',id:-100932};
++  const message=(text,reply)=>sys.webhook({message:{chat,from:{id:77},message_id:++seq,text,...(reply?{reply_to_message:reply}:{})}});
++  const last=()=>outgoing.at(-1).text;
++  const previous=()=>({from:{id:900000,is_bot:true},message_id:next,text:last()});
++  await message('/chat_on');
++  await message('/ai Uzbda qor qachon yogadi?');assert.equal(last(),'Qaysi shaharda?');
++  await message('Toshkent',previous());
++  assert.match(last(),/Toshkent.*qor yog‘ishi mumkin/);assert.equal(weatherCalls,1);
++  for(const e of outgoing.at(-1).entities)assert.ok(e.offset+e.length<=last().length);
++  await message('/ai Когда в Ташкенте выпадет снег?');assert.match(last(),/снег возможен/);assert.equal(weatherCalls,1);
++  const yr=new Intl.DateTimeFormat('en',{timeZone:'Asia/Tashkent',year:'numeric'}).format(new Date());
++  await message('/ai какой сейчас год?');assert.equal(last(),yr+' год.');
++  await message('/ai Hozir qaysi yil?');assert.equal(last(),yr+'-yil.');
++  await message('/ai Сколько тебе лет?');assert.equal(last(),'Я бот, у меня нет возраста.');
++  assert.equal(prompts.length,0);
++  await message('/ai Что произошло в 2024 году?');
++  assert.equal(last(),'Один ответ. Вторая фраза.');assert.ok(prompts[0].messages[0].content.includes(yr));assert.equal(prompts[0].messages.at(-1).content,'Что произошло в 2024 году?');
++  await message('/ai Расскажи подробно о шахматах.');
++  assert.match(last(),/Четвертая/);
 +});
 diff --git a/tests/product-v10.test.mjs b/tests/product-v10.test.mjs
 index 7e60db4..51c4353 100644

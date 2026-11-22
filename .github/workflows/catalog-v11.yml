@@ -56,12 +56,12 @@ jobs:
           def digest(b): return hashlib.sha256(b).hexdigest()
           live=digest(subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',
               origin+'/index.html?verify='+os.environ['GITHUB_SHA']]))
-          ready=current=='c00a6550-5b1f-4ee4-a82c-3ce7e83d815d' and live=='20b9cfaf637a886228af21e64d7285beaa48f3701f150a1dec3433fc54f4d93e'
+          ready=current=='3838235f-88eb-444c-be8e-ee9d7db23c6c' and live=='20b9cfaf637a886228af21e64d7285beaa48f3701f150a1dec3433fc54f4d93e'
           same=False
           if not ready and live==digest(open('public/index.html','rb').read()):
-              marker='/assets/donat/catalog/chat-welcome.jpg'
+              marker='/healthz?chat_ai=1'
               check=subprocess.run(['curl','-fsSL','--max-time','25',origin+marker],capture_output=True)
-              same=check.returncode==0 and check.stdout==open('public'+marker,'rb').read()
+              same=check.returncode==0 and json.loads(check.stdout).get('revision')=='concise-16'
           if not ready and not same: raise RuntimeError('Active production build differs from the verified release')
           with open(os.environ['GITHUB_OUTPUT'],'a') as output: print('deploy='+str(ready).lower(),file=output)
           PY
@@ -106,8 +106,8 @@ jobs:
               probe=subprocess.run(['curl','-fsSL','--max-time','8',origin+'/healthz?chat_ai=1&t='+str(time.time_ns())],capture_output=True)
               if probe.returncode==0:
                   check=json.loads(probe.stdout)
-                  if check.get('revision')=='bilingual-15' and check.get('uz') and check.get('ru'):
-                      print('Verified live Uzbek and Russian inference.',check['uz_model'],check['ru_model'])
+                  if check.get('revision')=='concise-16' and check.get('uz') and check.get('ru'):
+                      print('Live bilingual check:',json.dumps(check))
                       break
               time.sleep(8)
           else: raise RuntimeError('Live bilingual verification pending or unsuccessful')
