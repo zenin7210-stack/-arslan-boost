@@ -589,54 +589,177 @@ index 2ed7b5a..bd4e3e3 100644
  </body></html>
 diff --git a/src/group-ai.mjs b/src/group-ai.mjs
 new file mode 100644
-index 0000000..8bc3032
+index 0000000..5c732ad
 --- /dev/null
 +++ b/src/group-ai.mjs
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,158 @@
 +import { telegram, botToken } from './telegram.mjs';
 +
-+export async function answerGroupQuestion(env,store,config,m) {
-+  const text = m.text || m.caption || '';
-+  const name = config.name;
-+  if (!text || !name) return;
-+  const mention = new RegExp('(?:^|(?<=\\s))@' + name + '(?![a-z0-9_])', 'ig');
-+  const directed = new RegExp('^/ai(?:@' + name + ')?(?:\\s|$)', 'i');
-+  const reply = m.reply_to_message;
-+  const ownReply = reply?.from?.is_bot && reply.from.id === Number(botToken(env).split(':')[0]);
-+  if (text.startsWith('/') ? !directed.test(text) : !ownReply && !mention.test(text)) return;
-+  const question = text.replace(mention,'').replace(directed,'').trim().slice(0,1600);
-+  const chat = m.chat.id, author = m.from.id;
-+  const slot = await store.first(`INSERT INTO group_ai_turns(chat,mid,author)
-+    SELECT ?,?,? WHERE (SELECT count(*) FROM group_ai_turns WHERE chat=? AND author=? AND stamp>unixepoch()-60)<4
-+       AND (SELECT count(*) FROM group_ai_turns WHERE chat=? AND stamp>unixepoch()-60)<24
-+    ON CONFLICT DO NOTHING RETURNING mid`,chat,m.message_id,author,chat,author,chat);
-+  if (!slot) return;
-+  let answer = 'Savolingizni yozing.';
-+  if (question) {
-+    const messages = [{role:'system',content:'Siz ARSLAN CHAT guruhining yordamchisisiz. O‘zbek tilida lotin yozuvida qisqa va tushunarli javob bering. Narx, buyurtma holati va qoidalarni o‘ylab topmang. Do‘kon @arslansavdo, administrator @khblyv. Siz to‘lov, buyurtma yoki chat sozlamalarini o‘zgartira olmaysiz.'}];
-+    if (ownReply && reply.text) messages.push({role:'assistant',content:reply.text.slice(0,1200)});
-+    messages.push({role:'user',content:question});
-+    try {
-+      const result = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', { messages, max_tokens:260 });
-+      answer = result?.response?.trim();
-+      if (!answer) throw new Error('empty answer');
-+    } catch {
-+      answer = 'Hozir javob bera olmayapman. Birozdan keyin yana urinib ko‘ring.';
-+    }
++const mainModel = '@cf/openai/gpt-oss-120b';
++const backupModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
++const strings = {
++  uz: { ask:'Savolingizni yozing.', wait:'Savollar juda tez kelyapti. Bir daqiqadan keyin yana yozing.',
++    unavailable:'AI bilan aloqa uzildi. Savolni yana yuborishingiz mumkin.' },
++  ru: { ask:'Напиши свой вопрос.', wait:'Слишком много вопросов подряд. Попробуй через минуту.',
++    unavailable:'Связь с ИИ прервалась. Можешь отправить вопрос ещё раз.' }
++};
++
++function language(text, previous) {
++  const s=text.toLowerCase();
++  if (/(?:по[- ]русски|на русском|ruscha(?:da)?|rus tilida|рус тилида)/u.test(s)) return 'ru';
++  if (/(?:по[- ]узбекски|на узбекском|o[‘’ʻ'ʼ`]?zbek(?:cha| tilida)|ўзбекча)/u.test(s)) return 'uz';
++  if (/[ўқғҳ]|(?:салом|нима|қанча|канча|керак|рахмат|менга|яхши|сизга|калесан|бўлади|килиб|учун|булди|неча|киласиз)/u.test(s)) return 'uz';
++  if (/[а-яё]{2,}/u.test(s) || /\b(?:privet|skolko|pochemu|spasibo|kak dela)\b/.test(s)) return 'ru';
++  return /[a-z]{2,}/i.test(s) ? 'uz' : previous || 'uz';
++}
++
++function basicAnswer(text,lang) {
++  if (!text) return strings[lang].ask;
++  const clean=text.toLowerCase().trim().replace(/[?!., ]+$/u,'');
++  if (/^(?:привет|здравствуй(?:те)?|салом|salom|assalomu alaykum|ассалому алайкум|йо|yo|privet)$/.test(clean)) {
++    return lang==='ru'?'Привет! Чем помочь?':'Salom! Qanday yordam beray?';
 +  }
-+  await telegram(env,'sendMessage',{chat_id:chat,text:answer.slice(0,3000),
-+    reply_parameters:{message_id:m.message_id,allow_sending_without_reply:true},
-+    ...(m.message_thread_id ? {message_thread_id:m.message_thread_id} : {})});
++  // Accept only a complete arithmetic expression. Never evaluate code or a fragment of a question.
++  const expression=text.trim().replace(/^(?:(?:сколько(?: будет)?|посчитай|hisobla|hisoblang|qancha)\s*[:=]?\s*)/i,'')
++    .replace(/\s*(?:nech[ia]|qancha|ga teng)?\s*[=?!.]*$/iu,'').replace(/[,]/g,'.').replace(/[×хx]/g,'*').replace(/÷/g,'/').replace(/−/g,'-');
++  if (expression.length>100 || !/^[\d\s.()+*/-]+$/.test(expression) || !/[+*/-]/.test(expression)) return null;
++  const parts=expression.match(/\d+(?:\.\d+)?|[()+*/-]|[^\s]/g) || [];
++  let i=0;
++  function atom() {
++    const token=parts[i++];
++    if (token==='-') return -atom();
++    if (token==='+') return atom();
++    if (token==='(') { const n=sum(); return parts[i++]===')'? n : NaN; }
++    return /^\d+(\.\d+)?$/.test(token || '') ? Number(token) : NaN;
++  }
++  function product() {
++    let n=atom();
++    while (parts[i]==='*'||parts[i]==='/') {const op=parts[i++];const b=atom();n=op==='*'?n*b:n/b;}
++    return n;
++  }
++  function sum() {
++    let n=product();
++    while (parts[i]==='+'||parts[i]==='-') {const op=parts[i++];const b=product();n=op==='+'?n+b:n-b;}
++    return n;
++  }
++  const n=sum();
++  return i===parts.length && Number.isFinite(n) && Math.abs(n)<=1e12 ? String(Number(n.toPrecision(13))) : null;
++}
++
++function addressed(m,name,botId) {
++  const text=m.text || m.caption || '';
++  if (!text || !name) return null;
++  const command=new RegExp('^/ai(?:@'+name+')?(?:\\s|$)','i');
++  const mention=new RegExp('(?<![\\p{L}\\p{N}_@])@'+name+'(?![a-z0-9_])','giu');
++  const reply=m.reply_to_message;
++  const ownReply=reply?.from?.is_bot && reply.from.id===botId;
++  if (text.startsWith('/') ? !command.test(text) : !ownReply && !mention.test(text)) return null;
++  return { question:text.replace(command,'').replace(mention,'').trim().replace(/^[,:]\s*/, '').slice(0,1800),
++    reply:ownReply?reply:null };
++}
++
++function messagesFor(question,history,lang) {
++  const policy='You are Arslan, a helpful participant in the ARSLAN CHAT Telegram group. Answer the actual question directly, naturally and accurately. Use short plain-text paragraphs. Russian input gets natural Russian. Uzbek input (Latin, Cyrillic or informal Uzbek) gets natural Uzbek in Latin script unless a different script is requested. Follow explicit language requests. Uzbek is the default for ambiguous input. For a greeting greet naturally. For a follow-up use only the conversation supplied. Do not invent prices, game IDs, order status, access, or completed actions. If the user asks, the shop is @arslansavdo and the admin is @khblyv. Do not advertise in unrelated answers.';
++  return [{role:'system',content:policy+' Likely answer language: '+(lang==='ru'?'Russian.':'Uzbek.')},
++    ...history,{role:'user',content:question}];
++}
++
++function finalText(result) {
++  const value=result?.response ?? result?.choices?.[0]?.message?.content ?? result?.output_text ??
++    result?.output?.filter(x=>x.type==='message').flatMap(x=>x.content || []).filter(x=>x.type==='output_text').map(x=>x.text).join('\n');
++  if(typeof value!=='string') return '';
++  // Some inference APIs expose analysis separately. Only send the final user-visible text.
++  if(value.includes('<think>') && !value.includes('</think>')) return '';
++  return value.replace(/<think>[\s\S]*?<\/think>/gi,'').trim().slice(0,3000);
++}
++
++async function inference(env,messages) {
++  for (const model of [mainModel,backupModel]) {
++    let timer;
++    try {
++      const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('inference_timeout')),15000);});
++      const result=await Promise.race([env.AI.run(model,{messages,max_tokens:900,temperature:0.35}),timeout]);
++      const text=finalText(result);
++      if (text) return {text,model};
++      console.warn('Arslan group AI: empty output',model);
++    } catch (error) {
++      const code=String(error?.message || '').match(/\b(?:[1-9]\d{3}|429|500|502|503|504)\b/)?.[0];
++      console.warn('Arslan group AI: inference failed',model,code || (error?.message==='inference_timeout'?'timeout':'unavailable'));
++    } finally { clearTimeout(timer); }
++  }
++  return null;
++}
++
++export async function answerGroupQuestion(env,store,config,m) {
++  const target=addressed(m,config.name,Number(botToken(env).split(':')[0]));
++  if (!target) return;
++  const {question,reply}=target;
++  const chat=m.chat.id, author=m.from.id, mid=m.message_id;
++  const prior=reply?.message_id ? await store.first(`SELECT history,lang FROM group_ai_replies WHERE chat=? AND sent_mid=? AND author=? AND stamp>unixepoch()-600`,
++    chat,reply.message_id,author) : null;
++  const history=prior?.history ? JSON.parse(prior.history) : reply?.text ? [{role:'assistant',content:reply.text.slice(0,900)}] : [];
++  const lang=language(question,prior?.lang);
++  const quick=basicAnswer(question,lang);
++  const owner=crypto.randomUUID();
++  const results=await store.db.batch([
++    store.stmt(`INSERT INTO group_ai_replies(chat,mid,author,lang,mode)
++      SELECT ?,?,?,?,CASE WHEN ?=1 THEN 'local'
++        WHEN (SELECT count(*) FROM group_ai_replies WHERE chat=? AND author=? AND stamp>unixepoch()-60 AND mode='ai')>=12
++          OR (SELECT count(*) FROM group_ai_replies WHERE chat=? AND stamp>unixepoch()-60 AND mode='ai')>=50 THEN 'wait'
++        ELSE 'ai' END ON CONFLICT DO NOTHING`,chat,mid,author,lang,Number(quick!==null),chat,author,chat),
++    store.stmt(`UPDATE group_ai_replies SET lease=unixepoch()+45,owner=?
++      WHERE chat=? AND mid=? AND sent_mid IS NULL AND lease<=unixepoch() RETURNING mode,answer,history`,owner,chat,mid)
++  ]);
++  const job=results[1].results[0];
++  if (!job) return;
++  try {
++    let answer=job.answer;
++    if (!answer) {
++      const result=job.mode==='ai' ? await inference(env,messagesFor(question,history,lang)) : null;
++      answer=job.mode==='wait' ? strings[lang].wait : quick ?? result?.text ?? strings[lang].unavailable;
++      const next=job.mode!=='wait' && (quick!==null || result) ?
++        [...history,{role:'user',content:question},{role:'assistant',content:answer}].slice(-6).map(x=>({...x,content:x.content.slice(0,900)})) : history;
++      const saved=await store.first('UPDATE group_ai_replies SET answer=?,history=? WHERE chat=? AND mid=? AND owner=? RETURNING mid',
++        answer,JSON.stringify(next),chat,mid,owner);
++      if (!saved) return;
++    }
++    const sent=await telegram(env,'sendMessage',{chat_id:chat,text:answer,
++      reply_parameters:{message_id:mid,allow_sending_without_reply:true},
++      ...(m.message_thread_id?{message_thread_id:m.message_thread_id}:{})});
++    await store.stmt('UPDATE group_ai_replies SET sent_mid=?,lease=0 WHERE chat=? AND mid=? AND owner=?',sent.message_id,chat,mid,owner).run();
++  } catch(e) {
++    await store.stmt('UPDATE group_ai_replies SET lease=0 WHERE chat=? AND mid=? AND owner=?',chat,mid,owner).run();
++    throw e;
++  }
++}
++
++// Verify the deployed AI binding once per chat release using public test questions only.
++// Health requests only read these results and cannot trigger inference.
++export const aiRevision='bilingual-15';
++export async function verifyGroupModels(env,store) {
++  if (!env.AI || env.TELEGRAM_TEST_ENV!=='0') return;
++  const claim=await store.first(`INSERT INTO group_ai_checks(revision,attempts,stamp) VALUES(?,1,unixepoch())
++    ON CONFLICT(revision) DO UPDATE SET attempts=attempts+1,stamp=unixepoch()
++    WHERE (ru=0 OR uz=0) AND attempts<3 AND stamp<=unixepoch()-45 RETURNING ru,uz`,aiRevision);
++  if (!claim) return;
++  const probes=[['ru','Зачем в шахматах контролировать центр? Ответь одним предложением.'],
++    ['uz','Shaxmatda markazni nazorat qilish nega foydali? Bir jumlada javob bering.']];
++  for (const [lang,question] of probes) {
++    if (claim[lang]) continue;
++    const answer=await inference(env,messagesFor(question,[],lang));
++    const ok=lang==='ru' ? /[а-яё]{3,}/i.test(answer?.text || '') : /(?:shaxmat|markaz|nazorat|donal|harakat|imkon|yurish|raqib|hujum)/i.test(answer?.text || '');
++    if(ok) await store.stmt('UPDATE group_ai_checks SET '+lang+'=1,'+lang+'_model=? WHERE revision=?',answer.model,aiRevision).run();
++  }
 +}
 diff --git a/src/group-chat.mjs b/src/group-chat.mjs
 new file mode 100644
-index 0000000..bb1da5b
+index 0000000..5fabbb6
 --- /dev/null
 +++ b/src/group-chat.mjs
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,176 @@
 +import { telegram, botToken } from './telegram.mjs';
 +import { welcomeMembers, deleteDueWelcomes, importWelcome } from './group-welcome.mjs';
-+import { answerGroupQuestion } from './group-ai.mjs';
++import { answerGroupQuestion, verifyGroupModels, aiRevision } from './group-ai.mjs';
 +
 +const initialized = new WeakMap();
 +function ready(db) {
@@ -649,6 +772,11 @@ index 0000000..bb1da5b
 +      'CREATE TABLE IF NOT EXISTS group_extras(chat INTEGER PRIMARY KEY, template TEXT, ai INTEGER)',
 +      'CREATE TABLE IF NOT EXISTS group_ai_turns(chat INTEGER,mid INTEGER,author INTEGER,stamp INTEGER DEFAULT (unixepoch()),PRIMARY KEY(chat,mid))',
 +      'CREATE INDEX IF NOT EXISTS group_turn_time ON group_ai_turns(chat,stamp)',
++      'CREATE TABLE IF NOT EXISTS group_ai_replies(chat INTEGER,mid INTEGER,author INTEGER,stamp INTEGER DEFAULT (unixepoch()),lang TEXT,mode TEXT,lease INTEGER DEFAULT 0,owner TEXT,answer TEXT,history TEXT,sent_mid INTEGER,PRIMARY KEY(chat,mid))',
++      'CREATE INDEX IF NOT EXISTS group_ai_recent ON group_ai_replies(chat,mode,stamp,author)',
++      'CREATE INDEX IF NOT EXISTS group_ai_reply_id ON group_ai_replies(chat,sent_mid)',
++      'CREATE INDEX IF NOT EXISTS group_ai_expiry ON group_ai_replies(stamp)',
++      'CREATE TABLE IF NOT EXISTS group_ai_checks(revision TEXT PRIMARY KEY, attempts INTEGER,stamp INTEGER,ru INTEGER DEFAULT 0,uz INTEGER DEFAULT 0,ru_model TEXT,uz_model TEXT)',
 +      'CREATE TABLE IF NOT EXISTS group_welcomes(chat INTEGER,author INTEGER,joined INTEGER,mid INTEGER,due INTEGER,PRIMARY KEY(chat,author,joined))',
 +      'CREATE INDEX IF NOT EXISTS group_welcome_due ON group_welcomes(due) WHERE due IS NOT NULL'
 +    ];
@@ -656,13 +784,20 @@ index 0000000..bb1da5b
 +  }
 +  return initialized.get(db);
 +}
++export async function groupAIStatus(store) {
++  await ready(store.db);
++  return await store.first('SELECT revision,ru,uz,ru_model,uz_model,attempts FROM group_ai_checks WHERE revision=?',aiRevision) ||
++    { revision: aiRevision, ru:0, uz:0, attempts:0 };
++}
 +export async function expireGroupActivity(env,store) {
 +  await ready(store.db);
 +  await deleteDueWelcomes(env,store);
 +  await store.db.batch([
 +    store.stmt('DELETE FROM group_activity WHERE stamp < unixepoch()-600'),
-+    store.stmt('DELETE FROM group_ai_turns WHERE stamp < unixepoch()-600')
++    store.stmt('DELETE FROM group_ai_turns WHERE stamp < unixepoch()-600'),
++    store.stmt('DELETE FROM group_ai_replies WHERE stamp < unixepoch()-600')
 +  ]);
++  await verifyGroupModels(env,store);
 +}
 +const group = type => type === 'group' || type === 'supergroup';
 +const admin = role => role === 'administrator' || role === 'creator';
@@ -800,13 +935,13 @@ index 0000000..bb1da5b
 +}
 diff --git a/src/group-welcome.mjs b/src/group-welcome.mjs
 new file mode 100644
-index 0000000..6174ffe
+index 0000000..e7abf50
 --- /dev/null
 +++ b/src/group-welcome.mjs
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,110 @@
 +import { telegram } from './telegram.mjs';
 +
-+const banner = '/assets/donat/catalog/chat-welcome.jpg';
++const banner = '/assets/donat/catalog/chat-welcome.jpg?v=hd15';
 +const introduction = '💬 Salom @name\nguruhimizga xush kelibsiz\nqoidalarga amal qiling ❗';
 +const links = 'GOLD SHOP- @arslansavdo\nAKK SAVDO - @arslanakk\nKANAL @arslan_so2';
 +const footer = 'Admin @khblyv ⚡';
@@ -848,7 +983,8 @@ index 0000000..6174ffe
 +  const text = original?.caption;
 +  if (!original?.photo?.length || typeof text !== 'string' || text.split('@name').length !== 2 ||
 +      text.length > 900) return false;
-+  const template = { photo: original.photo.at(-1).file_id, caption: text, entities: original.caption_entities || [] };
++  const image = original.photo.at(-1);
++  const template = { photo:image.file_id, width:image.width, version:2, caption:text, entities:original.caption_entities || [] };
 +  await store.db.batch([
 +    store.stmt('INSERT INTO group_extras(chat,template) VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET template=excluded.template', chat, JSON.stringify(template)),
 +    store.stmt('INSERT INTO group_preferences(chat,welcome,greeting) VALUES(?,1,NULL) ON CONFLICT(chat) DO UPDATE SET welcome=1,greeting=NULL',chat)
@@ -864,7 +1000,9 @@ index 0000000..6174ffe
 +    return telegram(env, 'sendMessage', { ...dest, text });
 +  }
 +  const template = prefs.template ? JSON.parse(prefs.template) : defaultTemplate;
-+  const body = { ...dest, photo: template.photo || new URL(banner, config.app).href, ...personalized(template,user) };
++  const branded = ['@arslansavdo','@arslanakk','@arslan_so2'].every(tag=>template.caption.includes(tag));
++  const useHD = !template.photo || branded && (template.version!==2 || template.width<1000);
++  const body = { ...dest, photo: useHD ? new URL(banner, config.app).href : template.photo, ...personalized(template,user) };
 +  try { return await telegram(env, 'sendPhoto', body); }
 +  catch (error) {
 +    if (error.telegramCode !== 400 || !body.caption_entities.some(e => e.type === 'custom_emoji')) throw error;
@@ -983,11 +1121,11 @@ index 974847a..2d89ab3 100644
    }
    return true;
 diff --git a/src/worker.mjs b/src/worker.mjs
-index 7b304ea..c72198d 100644
+index 7b304ea..86698a5 100644
 --- a/src/worker.mjs
 +++ b/src/worker.mjs
 @@ -1,3 +1,4 @@
-+import { groupMessage, groupCallback, groupMembership, expireGroupActivity } from './group-chat.mjs';
++import { groupMessage, groupCallback, groupMembership, groupAIStatus, expireGroupActivity } from './group-chat.mjs';
  import {
    catalog, CALIBRATION_LEGEND_PRICE, formatAmount, integer, MAX_AMOUNT, MAX_STARS,
    MIN_BOOST_PRICE, MODE_SURCHARGE, MODES, PRICES, productTitle, RANKS, RequestError,
@@ -1075,7 +1213,15 @@ index 7b304ea..c72198d 100644
    await saveTelegramEntry(store, bot, syncMenu ? config.app : "", webhookConnected ? webhookUrl : null);
  }
  
-@@ -974,7 +986,7 @@ export default {
+@@ -957,6 +969,7 @@ export default {
+       if (path === "/telegram") return await handleWebhook(request, env, ctx, store, config);
+       if (path === "/setup") return await setup(request, env, config, store);
+       if (path === "/healthz" && request.method === "GET") {
++        if (url.searchParams.has("chat_ai")) return json(await groupAIStatus(store));
+         await store.eta();
+         const checkout = await checkoutSettings(store, config);
+         return json({ ok: true, telegramTest: config.test, paymentsEnabled: Boolean(checkout.topupRate) });
+@@ -974,7 +987,7 @@ export default {
        if (error instanceof RequestError) {
          if (path === "/setup") return setupPage("<p>Ошибка подключения. Проверь токен и сеть бота.</p>", error.status);
          if (path === "/telegram" && error.telegramCode === 403) return new Response("OK");
@@ -1084,7 +1230,7 @@ index 7b304ea..c72198d 100644
        }
        console.error("ARSLAN BOOST Worker failed");
        return json({ error: "service_unavailable" }, 503);
-@@ -987,6 +999,7 @@ export default {
+@@ -987,6 +1000,7 @@ export default {
      if (config.webhookReady && (env.SYNC_TELEGRAM_MENU === "1" || config.enabled || bankChatUpdates(env))) {
        background(ctx, syncTelegramEntry(env, store, config));
      }
@@ -1256,7 +1402,7 @@ index e53ec7d..b464d68 100644
      all:selector=>selector==='[data-history]'?tabs:selector==='#filters [data-history-filter]'?filters:[],
      glyph:()=>'<svg class="glyph"></svg>',
 diff --git a/tests/p2p.test.mjs b/tests/p2p.test.mjs
-index d012190..6f9bf70 100644
+index d012190..81df242 100644
 --- a/tests/p2p.test.mjs
 +++ b/tests/p2p.test.mjs
 @@ -505,7 +505,7 @@ test("the scheduled deployment updates the default chat button once", async t =>
@@ -1322,7 +1468,7 @@ index d012190..6f9bf70 100644
    assert.equal(greeting.body.parse_mode,'HTML');
    assert.match(greeting.body.photo,/\/assets\/start-welcome-v6\.jpg$/);
    const buttons=greeting.body.reply_markup.inline_keyboard.flat();
-@@ -2155,3 +2157,89 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
+@@ -2155,3 +2157,140 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
    const current=(await sys.api(1,`invoice/${placed.data.invoiceId}/status`,null,'GET')).data;
    assert.equal(current.expiresAt-current.createdAt,600);
  });
@@ -1367,7 +1513,7 @@ index d012190..6f9bf70 100644
 +  await sys.webhook({chat_member:{chat,date,old_chat_member:{status:'left'},new_chat_member:{status:'member',user:users[0]}}});
 +  await sys.webhook({message:join});await sys.webhook({message:join});
 +  assert.equal(sent('sendPhoto').length,2);
-+  assert.match(sent('sendPhoto')[0].photo,/chat-welcome.jpg$/);
++  assert.match(sent('sendPhoto')[0].photo,/chat-welcome\.jpg\?v=hd15$/);
 +  assert.match(sent('sendPhoto')[0].caption,/Salom @new_arslan/);
 +  assert.ok(sent('sendPhoto')[1].caption_entities.some(e=>e.type==='text_mention' && e.user.id===32));
 +  const original={photo:[{file_id:'original_photo'}],caption:'💬 Salom @name! ⚡',caption_entities:[
@@ -1411,6 +1557,57 @@ index d012190..6f9bf70 100644
 +  assert.equal((await sys.api(11,'support/history')).data.messages.length,1);
 +  assert.equal(responses.filter(x=>x.chat_id===11 && /soniyadan keyin/.test(x.text)).length,1);
 +  await sys.drain();
++});
++
++test('Chat AI answers arithmetic offline, handles languages, quotes, quotas and retries',async t=>{
++  const outbound=[],modelCalls=[];
++  let failPrimary=false, failDelivery=false, seq=0, messageId=500;
++  const sys=app({AI:{run:async(model,input)=>{
++    modelCalls.push({model,messages:input.messages});
++    if(failPrimary && model.includes('120b'))throw Error('503');
++    if(model.includes('120b'))return {choices:[{message:{reasoning_content:'internal',content:'Первый ответ.'}}]};
++    return {response:'Zaxira javobi.'};
++  }}});
++  t.mock.method(globalThis,'fetch',async(url,opts)=>{
++    const method=url.split('/').at(-1), body=JSON.parse(opts.body);
++    if (method==='getChatMember')return Response.json({ok:true,result:{status:'administrator',can_delete_messages:true,can_restrict_members:true}});
++    if(failDelivery && method==='sendMessage'){failDelivery=false;return Response.json({ok:false,error_code:503},{status:503});}
++    if(method==='sendMessage')outbound.push(body.text);
++    return Response.json({ok:true,result:{message_id:++messageId}});
++  });
++  const chat={type:'supergroup',id:-100213};
++  const message=(text,extra={},id=++seq)=>sys.webhook({message:{chat,from:{id:81},text,message_id:id,...extra}});
++  await message('/chat_on');
++  await sys.webhook({callback_query:{id:'no-flood',from:{id:40},data:'af:off',message:{chat,message_id:1}}});
++  const last=()=>outbound.at(-1);
++  await message('/ai 2+2?');assert.equal(last(),'4');assert.equal(modelCalls.length,0);
++  await message('/ai Сколько будет (2+3)×4?');assert.equal(last(),'20');
++  await message('/ai русча'); 
++  await message('/ai привет!');assert.match(last(),/Привет/);
++  await message('/ai салом');assert.match(last(),/Salom/);
++  await message('/ai Почему контролируют центр?');
++  const parent=messageId;
++  assert.equal(last(),'Первый ответ.');
++  assert.match(modelCalls.at(-1).messages[0].content,/Likely answer language: Russian/);
++  await message('А если центр закрыт?',{reply_to_message:{message_id:parent,from:{id:900000,is_bot:true},text:'Первый ответ.'}});
++  assert.ok(modelCalls.at(-1).messages.some(x=>x.role==='user'&&x.content.includes('контролируют центр')));
++  failPrimary=true;
++  await message('/ai ўйинда нима керак?');assert.equal(last(),'Zaxira javobi.');
++  assert.match(modelCalls.at(-1).messages[0].content,/Likely answer language: Uzbek/);
++  failDelivery=true;
++  const retry=++seq;
++  const count=modelCalls.length;
++  await message('/ai nima uchun?',{},retry);
++  await message('/ai nima uchun?',{},retry);
++  assert.equal(last(),'Zaxira javobi.');assert.equal(modelCalls.length,count+2);
++  await message('/ai nima uchun?',{},retry);assert.equal(modelCalls.length,count+2);
++  for(let i=0;i<13;i++)await message('/ai Что такое центр '+i+'?');
++  assert.match(last(),/через минуту/);
++  await message('/ai 2+2');assert.equal(last(),'4');
++  sys.db.prepare('UPDATE group_ai_replies SET stamp=unixepoch()-65 WHERE author=81').run();
++  await message('/ai Почему?');assert.equal(last(),'Zaxira javobi.');
++  const check=await sys.send('/healthz?chat_ai=1',null,{},'GET');
++  assert.equal(check.data.attempts,0);
 +});
 diff --git a/tests/product-v10.test.mjs b/tests/product-v10.test.mjs
 index 7e60db4..51c4353 100644
