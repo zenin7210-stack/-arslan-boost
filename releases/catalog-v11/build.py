@@ -55,5 +55,6 @@ verify("v10")
 apply((HERE / "catalog.patch").read_bytes())
 for art in (HERE / "art").glob("*.webp"):
     shutil.copyfile(art, assets / "donat/catalog" / art.name)
+shutil.copyfile(HERE / "art/chat-welcome.jpg", assets / "donat/catalog/chat-welcome.jpg")
 verify("v11")
 print("Source, static assets, catalog and production configuration verified.")

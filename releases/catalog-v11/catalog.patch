@@ -587,135 +587,329 @@ index 2ed7b5a..bd4e3e3 100644
 -  <script src="app.js?v=20261120-v9"></script>
 +  <script src="app.js?v=catalog11-chat13"></script>
  </body></html>
-diff --git a/src/group-chat.mjs b/src/group-chat.mjs
+diff --git a/src/group-ai.mjs b/src/group-ai.mjs
 new file mode 100644
-index 0000000..4b784ad
+index 0000000..8bc3032
 --- /dev/null
-+++ b/src/group-chat.mjs
-@@ -0,0 +1,124 @@
++++ b/src/group-ai.mjs
+@@ -0,0 +1,35 @@
 +import { telegram, botToken } from './telegram.mjs';
 +
-+const modes = {
-+  soft: { label: 'Yumshoq', burst: 8, copies: 4 },
-+  normal: { label: 'Odatiy', burst: 5, copies: 3 },
-+  strict: { label: 'Qat’iy', burst: 3, copies: 2 }
-+};
-+const defaults = { enabled: 0, welcome: 0, mode: 'normal' };
-+const initialized = new WeakMap();
++export async function answerGroupQuestion(env,store,config,m) {
++  const text = m.text || m.caption || '';
++  const name = config.name;
++  if (!text || !name) return;
++  const mention = new RegExp('(?:^|(?<=\\s))@' + name + '(?![a-z0-9_])', 'ig');
++  const directed = new RegExp('^/ai(?:@' + name + ')?(?:\\s|$)', 'i');
++  const reply = m.reply_to_message;
++  const ownReply = reply?.from?.is_bot && reply.from.id === Number(botToken(env).split(':')[0]);
++  if (text.startsWith('/') ? !directed.test(text) : !ownReply && !mention.test(text)) return;
++  const question = text.replace(mention,'').replace(directed,'').trim().slice(0,1600);
++  const chat = m.chat.id, author = m.from.id;
++  const slot = await store.first(`INSERT INTO group_ai_turns(chat,mid,author)
++    SELECT ?,?,? WHERE (SELECT count(*) FROM group_ai_turns WHERE chat=? AND author=? AND stamp>unixepoch()-60)<4
++       AND (SELECT count(*) FROM group_ai_turns WHERE chat=? AND stamp>unixepoch()-60)<24
++    ON CONFLICT DO NOTHING RETURNING mid`,chat,m.message_id,author,chat,author,chat);
++  if (!slot) return;
++  let answer = 'Savolingizni yozing.';
++  if (question) {
++    const messages = [{role:'system',content:'Siz ARSLAN CHAT guruhining yordamchisisiz. O‘zbek tilida lotin yozuvida qisqa va tushunarli javob bering. Narx, buyurtma holati va qoidalarni o‘ylab topmang. Do‘kon @arslansavdo, administrator @khblyv. Siz to‘lov, buyurtma yoki chat sozlamalarini o‘zgartira olmaysiz.'}];
++    if (ownReply && reply.text) messages.push({role:'assistant',content:reply.text.slice(0,1200)});
++    messages.push({role:'user',content:question});
++    try {
++      const result = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', { messages, max_tokens:260 });
++      answer = result?.response?.trim();
++      if (!answer) throw new Error('empty answer');
++    } catch {
++      answer = 'Hozir javob bera olmayapman. Birozdan keyin yana urinib ko‘ring.';
++    }
++  }
++  await telegram(env,'sendMessage',{chat_id:chat,text:answer.slice(0,3000),
++    reply_parameters:{message_id:m.message_id,allow_sending_without_reply:true},
++    ...(m.message_thread_id ? {message_thread_id:m.message_thread_id} : {})});
++}
+diff --git a/src/group-chat.mjs b/src/group-chat.mjs
+new file mode 100644
+index 0000000..bb1da5b
+--- /dev/null
++++ b/src/group-chat.mjs
+@@ -0,0 +1,164 @@
++import { telegram, botToken } from './telegram.mjs';
++import { welcomeMembers, deleteDueWelcomes, importWelcome } from './group-welcome.mjs';
++import { answerGroupQuestion } from './group-ai.mjs';
 +
++const initialized = new WeakMap();
 +function ready(db) {
 +  if (!initialized.has(db)) {
 +    const sql = [
 +      `CREATE TABLE IF NOT EXISTS group_preferences(chat INTEGER PRIMARY KEY, enabled INTEGER DEFAULT 0, welcome INTEGER DEFAULT 0, mode TEXT DEFAULT 'normal', greeting TEXT)`,
 +      'CREATE TABLE IF NOT EXISTS group_activity(chat INTEGER, mid INTEGER, author INTEGER, fingerprint TEXT, blocked INTEGER, stamp INTEGER DEFAULT (unixepoch()), PRIMARY KEY(chat,mid))',
 +      'CREATE INDEX IF NOT EXISTS group_sender_window ON group_activity(chat,author,stamp)',
-+      'CREATE INDEX IF NOT EXISTS group_activity_age ON group_activity(stamp)'
++      'CREATE INDEX IF NOT EXISTS group_activity_age ON group_activity(stamp)',
++      'CREATE TABLE IF NOT EXISTS group_extras(chat INTEGER PRIMARY KEY, template TEXT, ai INTEGER)',
++      'CREATE TABLE IF NOT EXISTS group_ai_turns(chat INTEGER,mid INTEGER,author INTEGER,stamp INTEGER DEFAULT (unixepoch()),PRIMARY KEY(chat,mid))',
++      'CREATE INDEX IF NOT EXISTS group_turn_time ON group_ai_turns(chat,stamp)',
++      'CREATE TABLE IF NOT EXISTS group_welcomes(chat INTEGER,author INTEGER,joined INTEGER,mid INTEGER,due INTEGER,PRIMARY KEY(chat,author,joined))',
++      'CREATE INDEX IF NOT EXISTS group_welcome_due ON group_welcomes(due) WHERE due IS NOT NULL'
 +    ];
-+    initialized.set(db, (async () => { for (const statement of sql) await db.prepare(statement).run(); })().catch(e => { initialized.delete(db); throw e; }));
++    initialized.set(db, (async () => { for (const s of sql) await db.prepare(s).run(); })().catch(e => { initialized.delete(db); throw e; }));
 +  }
 +  return initialized.get(db);
 +}
-+export async function expireGroupActivity(store) {
++export async function expireGroupActivity(env,store) {
 +  await ready(store.db);
-+  await store.stmt('DELETE FROM group_activity WHERE stamp < unixepoch()-600').run();
++  await deleteDueWelcomes(env,store);
++  await store.db.batch([
++    store.stmt('DELETE FROM group_activity WHERE stamp < unixepoch()-600'),
++    store.stmt('DELETE FROM group_ai_turns WHERE stamp < unixepoch()-600')
++  ]);
 +}
 +const group = type => type === 'group' || type === 'supergroup';
 +const admin = role => role === 'administrator' || role === 'creator';
 +const member = (env, chat, user) => telegram(env, 'getChatMember', { chat_id: chat, user_id: user });
 +
-+async function panel(env, chat, settings, messageId) {
-+  const { enabled, mode, welcome } = settings;
-+  const rule = modes[mode];
-+  const self = await member(env, chat, Number(botToken(env).split(':')[0]));
-+  const canDelete = self.status === 'creator' || (self.status === 'administrator' &&
-+    (self.can_delete_messages || self.can_delete_messages === undefined && !String(chat).startsWith('-100')));
-+  const button = (text, value) => ({ text, callback_data: 'af:'+value });
-+  const text = ['🛡 Guruh sozlamalari', '',
-+    'Spamdan himoya: ' + (enabled ? 'yoqilgan' : 'o‘chirilgan'),
-+    '10 soniyada '+rule.burst+' tagacha xabar. Bir xil xabarning 60 soniya ichidagi '+rule.copies+'-nusxasi o‘chiriladi.',
-+    'Yangi a’zolar uchun salomlashuv: '+(welcome ? 'yoqilgan' : 'o‘chirilgan'),
-+    'Salomlashuv matnini yozish: /salom Xush kelibsiz, {ism}! Standart matnga qaytish: /salom reset.',
-+    ...(!canDelete ? ['', 'Himoya ishlashi uchun botga administrator maqomi va xabarlarni o‘chirish huquqini bering.'] : [])
-+  ].join('\n');
-+  const reply_markup = { inline_keyboard: [
-+    [button(enabled ? 'Himoyani o‘chirish' : 'Himoyani yoqish', enabled ? 'off' : 'on')],
-+    Object.entries(modes).map(([key, preset]) => button((key === mode ? '✓ ' : '')+preset.label,key)),
-+    [button(welcome ? 'Salomlashuvni o‘chirish' : 'Salomlashuvni yoqish', welcome ? 'quiet' : 'greet')]
-+  ] };
-+  await telegram(env,messageId ? 'editMessageText' : 'sendMessage', {
-+    chat_id: chat, ...(messageId ? {message_id:messageId} : {}), text, reply_markup
-+  }).catch(e => { if (!(messageId && e.telegramCode===400)) throw e; });
-+}
 +async function settings(store, chat) {
 +  await ready(store.db);
-+  return await store.first('SELECT * FROM group_preferences WHERE chat=?',chat) || defaults;
++  return store.first(`SELECT COALESCE(p.enabled,0) enabled, COALESCE(p.welcome,0) welcome,
++    p.greeting,e.template,COALESCE(e.ai,p.enabled OR p.welcome,0) ai
++    FROM (SELECT ? AS chat) base LEFT JOIN group_preferences p USING(chat) LEFT JOIN group_extras e USING(chat)`,chat);
++}
++
++async function panel(env, chat, settings, messageId) {
++  const { enabled, welcome, ai } = settings;
++  const self = await member(env,chat.id,Number(botToken(env).split(':')[0]));
++  const button = (text, value) => ({text,callback_data:'af:'+value});
++  const warning = chat.type !== 'supergroup' ? 'Vaqtincha yozishni cheklash uchun superguruh kerak.'
++    : !admin(self.status) || self.status !== 'creator' && (!self.can_delete_messages || !self.can_restrict_members)
++      ? 'Botga administrator maqomi, xabarlarni o‘chirish va a’zolarni cheklash huquqlarini bering.' : '';
++  const text = ['🛡 Guruh sozlamalari','',
++    '60 soniyada 5 ta bir xil xabar — 1 daqiqaga yozish cheklanadi.',
++    '5 soniyada 10 tagacha xabar mumkin. Ortiqchasi o‘chiriladi.',
++    'Salomlashuv 5 daqiqadan so‘ng avtomatik o‘chiriladi.',
++    'Asl salomlashuv postiga javoban /salom_namuna yuboring. Standart matn: /salom reset.',
++    'AI bilan suhbat: /ai savol, botni belgilang yoki uning xabariga javob bering.',warning].filter(Boolean).join('\n');
++  const toggles = [[button('Spamdan himoya · '+(enabled?'✅':'❌'),enabled?'off':'on')],
++    [button('Salomlashuv · '+(welcome?'✅':'❌'),welcome?'quiet':'greet')],
++    [button('AI yordamchi · '+(ai?'✅':'❌'),ai?'ai_off':'ai_on')]];
++  await telegram(env,messageId?'editMessageText':'sendMessage',{chat_id:chat.id,...(messageId?{message_id:messageId}:{}),
++    text,reply_markup:{inline_keyboard:toggles}}).catch(e=>{if (!(messageId && e.telegramCode===400)) throw e;});
 +}
 +export async function groupCallback(env,store,q) {
 +  if (!q.data?.startsWith('af:')) return false;
 +  const chat=q.message?.chat;
 +  if (!group(chat?.type) || !admin((await member(env,chat.id,q.from.id)).status)) {
-+    await telegram(env,'answerCallbackQuery',{callback_query_id:q.id,text:'Sozlamalarni faqat guruh administratori o‘zgartira oladi.',show_alert:true}); return true;
++    await telegram(env,'answerCallbackQuery',{callback_query_id:q.id,text:'Buni faqat guruh administratori sozlay oladi.',show_alert:true}); return true;
 +  }
-+  const value=q.data.slice(3);
-+  const choices={on:['enabled',1],off:['enabled',0],greet:['welcome',1],quiet:['welcome',0]};
-+  const setting=Object.hasOwn(modes,value) ? ['mode',value] : Object.hasOwn(choices,value) ? choices[value] : null;
-+  if (!setting) return true;
 +  await ready(store.db);
-+  const [column,next]=setting;
-+  await store.stmt('INSERT INTO group_preferences(chat,'+column+') VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET '+column+'=excluded.'+column,chat.id,next).run();
-+  await telegram(env,'answerCallbackQuery',{callback_query_id:q.id,text:'Sozlamalar saqlandi.'});
-+  await panel(env,chat.id,await settings(store,chat.id),q.message.message_id);
++  const value=q.data.slice(3);
++  const choices={on:['group_preferences','enabled',1],off:['group_preferences','enabled',0],
++    greet:['group_preferences','welcome',1],quiet:['group_preferences','welcome',0],
++    ai_on:['group_extras','ai',1],ai_off:['group_extras','ai',0]};
++  if (Object.hasOwn(choices,value)) {
++    const [table,column,next]=choices[value];
++    await store.stmt(`INSERT INTO ${table}(chat,${column}) VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET ${column}=excluded.${column}`,chat.id,next).run();
++  }
++  await telegram(env,'answerCallbackQuery',{callback_query_id:q.id,text:'Joriy sozlamalar'});
++  await panel(env,chat,await settings(store,chat.id),q.message.message_id);
 +  return true;
 +}
++
 +async function fingerprint(m) {
-+  const media=m.photo?.at(-1) || m.sticker || m.document || m.video || m.animation || m.voice || m.audio;
-+  const value=[(m.text || m.caption || '').normalize('NFKC').toLowerCase().trim().replace(/\s+/gu,' '),media?.file_unique_id].filter(Boolean).join('\n');
++  const media=m.photo?.at(-1) || m.sticker || m.document || m.video || m.video_note || m.animation || m.voice || m.audio;
++  const content=m.text || m.caption || m.poll?.question || m.dice?.emoji || m.contact?.phone_number;
++  const value=[content?.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu,' '),media?.file_unique_id].filter(Boolean).join('\n');
 +  if (!value) return null;
 +  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))), b=>b.toString(16).padStart(2,'0')).join('');
 +}
-+export async function groupMessage(env,store,config,m) {
-+  if (!group(m.chat?.type)) return;
-+  const chat=m.chat.id, mid=m.message_id, author=m.from?.id;
-+  const command=/^\/(antiflood|salom)(?:@([a-z0-9_]+))?(?:\s|$)/i.exec(m.text || '');
-+  if (command && (!command[2] || command[2].toLowerCase() === config.name?.toLowerCase()) &&
-+      author && !m.sender_chat && admin((await member(env,chat,author)).status)) {
-+    if (command[1].toLowerCase() === 'salom') {
-+      const value = m.text.slice(command[0].length).trim();
-+      if (!value || value.length > 500) {
-+        await telegram(env,'sendMessage',{chat_id:chat,text:'500 belgigacha matn yozing. Masalan: /salom Assalomu alaykum, {ism}! {guruh} guruhiga xush kelibsiz.'}); return;
-+      }
-+      await ready(store.db);
-+      await store.stmt('INSERT INTO group_preferences(chat,greeting) VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET greeting=excluded.greeting',chat,value==='reset'?null:value).run();
-+    }
-+    await panel(env,chat,await settings(store,chat)); return;
-+  }
-+  const prefs=await settings(store,chat);
-+  if (m.new_chat_members) {
-+    const names=m.new_chat_members.filter(u=>!u.is_bot).map(u=>u.first_name).filter(Boolean);
-+    if (!prefs.welcome || !names.length) return;
-+    const fresh=await store.first('INSERT INTO group_activity(chat,mid,author) VALUES(?,?,0) ON CONFLICT DO NOTHING RETURNING mid',chat,mid);
-+    const welcome=prefs.greeting || '👋 Assalomu alaykum, {ism}!\n\n{guruh} guruhiga xush kelibsiz. Savolingiz bo‘lsa, bemalol yozing. Bir-birimizga hurmat bilan munosabatda bo‘laylik.';
-+    const text=welcome.replace(/\{(ism|guruh)\}/g, (_,key)=>key==='ism'?names.join(', ').slice(0,200):(m.chat.title || 'ARSLAN')).slice(0,4000);
-+    if (fresh) await telegram(env,'sendMessage',{chat_id:chat,text,
-+      ...(config.name ? {reply_markup:{inline_keyboard:[[{text:'🛍 Do‘konni ochish',url:'https://t.me/'+config.name}]]}} : {})});
-+    return;
-+  }
-+  if (!prefs.enabled || !author || m.sender_chat || m.from.is_bot || m.left_chat_member) return;
++
++async function moderate(env,store,m) {
++  const chat=m.chat.id, mid=m.message_id, author=m.from.id;
 +  const hash=await fingerprint(m);
-+  const rule=modes[prefs.mode];
++  // Decide both limits in the same D1 transaction, scoped to a sender and chat.
 +  const results=await store.db.batch([
 +    store.stmt('INSERT INTO group_activity(chat,mid,author,fingerprint) VALUES(?,?,?,?) ON CONFLICT DO NOTHING',chat,mid,author,hash),
-+    store.stmt(`UPDATE group_activity SET blocked=(SELECT count(*) FILTER (WHERE stamp>unixepoch()-10)>?
-+      OR count(*) FILTER (WHERE fingerprint=?)>=? FROM group_activity
-+      WHERE chat=? AND author=? AND stamp>unixepoch()-60)
-+      WHERE chat=? AND mid=? AND blocked IS NULL`,rule.burst,hash,rule.copies,chat,author,chat,mid),
-+    store.stmt('SELECT blocked FROM group_activity WHERE chat=? AND mid=?',chat,mid)
++    store.stmt(`UPDATE group_activity SET blocked=(SELECT CASE
++      WHEN count(*) FILTER (WHERE fingerprint=?)=5 THEN 2
++      WHEN count(*) FILTER (WHERE fingerprint=?)>5 OR count(*) FILTER (WHERE stamp>unixepoch()-5)>10 THEN 1 ELSE 0 END
++      FROM group_activity WHERE chat=? AND author=? AND stamp>unixepoch()-60)
++      WHERE chat=? AND mid=? AND blocked IS NULL`,hash,hash,chat,author,chat,mid),
++    store.stmt('SELECT blocked,stamp FROM group_activity WHERE chat=? AND mid=?',chat,mid)
 +  ]);
-+  if (!results[2].results[0]?.blocked) return;
-+  if (admin((await member(env,chat,author)).status)) return;
-+  await telegram(env,'deleteMessage',{chat_id:chat,message_id:mid}).catch(e=>{
-+    if (![400,403].includes(e.telegramCode)) throw e;
-+  });
++  const {blocked,stamp}=results[2].results[0];
++  if (!blocked) return false;
++  if (blocked === 3) return true;
++  const person=await member(env,chat,author);
++  if (admin(person.status)) return false;
++  // Retried webhooks always use the original expiry. Telegram treats <30s as permanent.
++  if (blocked===2 && m.chat.type==='supergroup' && person.status==='member' && stamp+60-Date.now()/1000>31) {
++    await telegram(env,'restrictChatMember',{chat_id:chat,user_id:author,permissions:{can_send_messages:false},
++      use_independent_chat_permissions:true,until_date:stamp+60}).catch(e=>{if (![400,403].includes(e.telegramCode)) throw e;});
++  }
++  await telegram(env,'deleteMessage',{chat_id:chat,message_id:mid}).catch(e=>{if (![400,403].includes(e.telegramCode)) throw e;});
++  await store.stmt('UPDATE group_activity SET blocked=3 WHERE chat=? AND mid=?',chat,mid).run();
++  return true;
++}
++
++export async function groupMembership(env,store,config,event) {
++  const joined = state => ['member','creator','administrator'].includes(state?.status) || state?.status==='restricted' && state.is_member;
++  if (group(event.chat?.type) && !joined(event.old_chat_member) && joined(event.new_chat_member)) {
++    await welcomeMembers(env,store,config,await settings(store,event.chat.id),event.chat,[event.new_chat_member.user],event.date);
++  }
++}
++
++export async function groupMessage(env,store,config,m) {
++  if (!group(m.chat?.type)) return;
++  const chat=m.chat.id;
++  const prefs=await settings(store,chat);
++  if (m.new_chat_members) {
++    await welcomeMembers(env,store,config,prefs,m.chat,m.new_chat_members,m.date,m.message_thread_id);
++    return;
++  }
++  if (!m.from?.id || m.sender_chat || m.from.is_bot || m.left_chat_member) return;
++  const command=/^\/(antiflood|chat_on|salom_namuna|salom)(?:@([a-z0-9_]+))?(?:\s|$)/i.exec(m.text || '');
++  if (command && (!command[2] || command[2].toLowerCase() === config.name?.toLowerCase()) && admin((await member(env,chat,m.from.id)).status)) {
++    switch (command[1].toLowerCase()) {
++      case 'chat_on':
++        await store.db.batch([
++          store.stmt('INSERT INTO group_preferences(chat,enabled,welcome) VALUES(?,1,1) ON CONFLICT(chat) DO UPDATE SET enabled=1,welcome=1',chat),
++          store.stmt('INSERT INTO group_extras(chat,ai) VALUES(?,1) ON CONFLICT(chat) DO UPDATE SET ai=1',chat)
++        ]);
++        break;
++      case 'salom_namuna':
++        if (!await importWelcome(store,chat,m.reply_to_message)) {
++          await telegram(env,'sendMessage',{chat_id:chat,text:'Rasm va tagmatnli asl xabarga javoban /salom_namuna yuboring. Tagmatnda @name bir marta bo‘lsin (900 belgigacha).'}); return;
++        }
++        break;
++      case 'salom': {
++        const value=m.text.slice(command[0].length).trim();
++        if (!value || value.length>500) {
++          await telegram(env,'sendMessage',{chat_id:chat,text:'Masalan: /salom Salom, @name! Standart matn uchun: /salom reset.'}); return;
++        }
++        await store.db.batch([
++          store.stmt('INSERT INTO group_preferences(chat,greeting) VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET greeting=excluded.greeting',chat,value==='reset'?null:value),
++          store.stmt('UPDATE group_extras SET template=NULL WHERE chat=?',chat)
++        ]);
++        break;
++      }
++    }
++    await panel(env,m.chat,await settings(store,chat)); return;
++  }
++  if (!['text','caption','sticker','photo','video','video_note','audio','voice','document','animation','contact','location','poll','dice','venue','game'].some(key=>m[key]!=null)) return;
++  if (prefs.enabled && await moderate(env,store,m)) return;
++  if (prefs.ai) await answerGroupQuestion(env,store,config,m);
++}
+diff --git a/src/group-welcome.mjs b/src/group-welcome.mjs
+new file mode 100644
+index 0000000..6174ffe
+--- /dev/null
++++ b/src/group-welcome.mjs
+@@ -0,0 +1,107 @@
++import { telegram } from './telegram.mjs';
++
++const banner = '/assets/donat/catalog/chat-welcome.jpg';
++const introduction = '💬 Salom @name\nguruhimizga xush kelibsiz\nqoidalarga amal qiling ❗';
++const links = 'GOLD SHOP- @arslansavdo\nAKK SAVDO - @arslanakk\nKANAL @arslan_so2';
++const footer = 'Admin @khblyv ⚡';
++const caption = [introduction, links, footer].join('\n\n');
++
++function style(type, part) {
++  return { type, offset: caption.indexOf(part), length: part.length };
++}
++
++const defaultTemplate = { caption, entities: [
++  style('bold', introduction), style('italic', introduction),
++  style('blockquote', links), style('bold', links), style('italic', links),
++  ...['@arslansavdo', '@arslanakk', '@arslan_so2', '@khblyv'].map(tag => style('mention', tag)),
++  style('bold', footer)
++] };
++
++export function personalized(template, user) {
++  const start = template.caption.indexOf('@name');
++  const end = start + 5;
++  const name = user.username ? '@' + user.username : user.first_name || 'Do‘st';
++  const delta = name.length - 5;
++  const entities = [];
++  for (const entity of template.entities) {
++    const a = entity.offset, b = a + entity.length;
++    if (b <= start) entities.push(entity);
++    else if (a >= end) entities.push({ ...entity, offset: a + delta });
++    else if (a <= start && b >= end && !['mention', 'text_mention', 'text_link'].includes(entity.type)) {
++      entities.push({ ...entity, length: entity.length + delta });
++    }
++  }
++  entities.push(user.username ? { type: 'mention', offset: start, length: name.length }
++    : { type: 'text_mention', offset: start, length: name.length,
++        user: { id: user.id, is_bot: false, first_name: name } });
++  entities.sort((a,b) => a.offset - b.offset || b.length - a.length);
++  return { caption: template.caption.slice(0,start) + name + template.caption.slice(end), caption_entities: entities };
++}
++
++export async function importWelcome(store, chat, original) {
++  const text = original?.caption;
++  if (!original?.photo?.length || typeof text !== 'string' || text.split('@name').length !== 2 ||
++      text.length > 900) return false;
++  const template = { photo: original.photo.at(-1).file_id, caption: text, entities: original.caption_entities || [] };
++  await store.db.batch([
++    store.stmt('INSERT INTO group_extras(chat,template) VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET template=excluded.template', chat, JSON.stringify(template)),
++    store.stmt('INSERT INTO group_preferences(chat,welcome,greeting) VALUES(?,1,NULL) ON CONFLICT(chat) DO UPDATE SET welcome=1,greeting=NULL',chat)
++  ]);
++  return true;
++}
++
++async function sendWelcome(env, config, prefs, chat, user, thread) {
++  const dest = { chat_id: chat.id, ...(thread ? { message_thread_id: thread } : {}) };
++  if (prefs.greeting) {
++    const text = prefs.greeting.replace(/@name|\{ism\}|\{guruh\}/g, key =>
++      key === '{guruh}' ? chat.title || 'ARSLAN' : user.username ? '@' + user.username : user.first_name || 'Do‘st');
++    return telegram(env, 'sendMessage', { ...dest, text });
++  }
++  const template = prefs.template ? JSON.parse(prefs.template) : defaultTemplate;
++  const body = { ...dest, photo: template.photo || new URL(banner, config.app).href, ...personalized(template,user) };
++  try { return await telegram(env, 'sendPhoto', body); }
++  catch (error) {
++    if (error.telegramCode !== 400 || !body.caption_entities.some(e => e.type === 'custom_emoji')) throw error;
++    return telegram(env, 'sendPhoto', { ...body, caption_entities: body.caption_entities.filter(e => e.type !== 'custom_emoji') });
++  }
++}
++
++export async function welcomeMembers(env,store,config,prefs,chat,users,date,thread) {
++  if (!prefs.welcome) return;
++  const joined = date || Math.floor(Date.now()/1000);
++  for (const user of users) {
++    if (!user.id || user.is_bot) continue;
++    const claim = await store.first(`INSERT INTO group_welcomes(chat,author,joined)
++      SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM group_welcomes WHERE chat=? AND author=? AND joined BETWEEN ? AND ?)
++      ON CONFLICT DO NOTHING RETURNING joined`,chat.id,user.id,joined,chat.id,user.id,joined-2,joined+2);
++    if (!claim) continue;
++    let sent;
++    try { sent = await sendWelcome(env,config,prefs,chat,user,thread); }
++    catch (error) {
++      await store.stmt('DELETE FROM group_welcomes WHERE chat=? AND author=? AND joined=? AND mid IS NULL',chat.id,user.id,joined).run();
++      throw error;
++    }
++    await store.stmt('UPDATE group_welcomes SET mid=?,due=unixepoch()+300 WHERE chat=? AND author=? AND joined=?',
++      sent.message_id,chat.id,user.id,joined).run();
++  }
++}
++
++export async function deleteDueWelcomes(env, store) {
++  const rows = await store.all('SELECT chat,author,joined,mid FROM group_welcomes WHERE due<=unixepoch() ORDER BY due LIMIT 80');
++  for (let i = 0; i < rows.length; i += 5) {
++    await Promise.all(rows.slice(i,i+5).map(async row => {
++      const id = [row.chat, row.author, row.joined];
++      try {
++        await telegram(env, 'deleteMessage', { chat_id: row.chat, message_id: row.mid });
++      } catch (error) {
++        if (error.telegramCode !== 400) {
++          await store.stmt('UPDATE group_welcomes SET due=unixepoch()+? WHERE chat=? AND author=? AND joined=?',
++            error.telegramCode === 403 ? 300 : 60,...id).run();
++          return;
++        }
++      }
++      await store.stmt('UPDATE group_welcomes SET due=NULL WHERE chat=? AND author=? AND joined=?',...id).run();
++    }));
++  }
++  await store.stmt('DELETE FROM group_welcomes WHERE joined<unixepoch()-172800').run();
 +}
 diff --git a/src/store.mjs b/src/store.mjs
 index 08f706d..23a2b28 100644
@@ -789,14 +983,23 @@ index 974847a..2d89ab3 100644
    }
    return true;
 diff --git a/src/worker.mjs b/src/worker.mjs
-index 7b304ea..887d01e 100644
+index 7b304ea..c72198d 100644
 --- a/src/worker.mjs
 +++ b/src/worker.mjs
 @@ -1,3 +1,4 @@
-+import { groupMessage, groupCallback, expireGroupActivity } from './group-chat.mjs';
++import { groupMessage, groupCallback, groupMembership, expireGroupActivity } from './group-chat.mjs';
  import {
    catalog, CALIBRATION_LEGEND_PRICE, formatAmount, integer, MAX_AMOUNT, MAX_STARS,
    MIN_BOOST_PRICE, MODE_SURCHARGE, MODES, PRICES, productTitle, RANKS, RequestError,
+@@ -40,7 +41,7 @@ function validTestPayment(payment, sender, config, provider) {
+ }
+ 
+ function requiredTelegramUpdates(env) {
+-  return bankChatUpdates(env) ? [...paymentUpdates, "business_message"] : paymentUpdates;
++  return [...paymentUpdates, ...(bankChatUpdates(env) ? ["business_message"] : []), "chat_member"];
+ }
+ 
+ function httpsUrl(value) {
 @@ -463,8 +464,8 @@ async function handleCommand(env, ctx, store, config, message) {
        if (!url) throw new RequestError('miniapp_url_required',503);
        if(command==='/start')await bindPartner(store,message.from.id,args[0]);
@@ -808,12 +1011,14 @@ index 7b304ea..887d01e 100644
        const photo=new URL('assets/start-welcome-v6.jpg',url).href;
        try {
          return await telegram(env,'sendPhoto',{chat_id:chatId,photo,caption:customGreeting,
-@@ -815,10 +816,12 @@ async function handleWebhook(request, env, ctx, store, config) {
+@@ -815,10 +816,14 @@ async function handleWebhook(request, env, ctx, store, config) {
    } else if (update.message?.successful_payment && update.message.chat?.type === "private") {
      await handlePaid(env, ctx, store, update.message);
    } else if (update.callback_query) {
 -    await handleCallback(env, ctx, store, config, update.callback_query);
 +    if (!await groupCallback(env,store,update.callback_query)) await handleCallback(env, ctx, store, config, update.callback_query);
++  } else if (update.chat_member) {
++    await groupMembership(env,store,config,update.chat_member);
    } else if (update.business_message && bankChatUpdates(env)) {
      const event = await receiveBankChat(env, store, config.admin, update.business_message);
      notifyTransfer(env, ctx, store, event);
@@ -822,7 +1027,55 @@ index 7b304ea..887d01e 100644
    } else if (update.message?.chat?.type === "private" && update.message.from?.id && update.message.text) {
      const msg=update.message;
      if (await handleCostReply(env, store, msg)) return new Response('OK');
-@@ -974,7 +977,7 @@ export default {
+@@ -845,16 +850,21 @@ function setupPage(content, status = 200) {
+ 
+ function receivesRequiredUpdates(webhook, env) {
+   const subscribed = webhook.allowed_updates;
+-  return !Array.isArray(subscribed) || !subscribed.length ||
++  return Array.isArray(subscribed) &&
+     requiredTelegramUpdates(env).every(update => subscribed.includes(update));
+ }
+ 
+ function registerWebhook(env, url, existing) {
+   const subscribed = existing.allowed_updates;
+   const required = requiredTelegramUpdates(env);
+-  const updates = existing.url
+-    ? (subscribed?.length ? [...new Set([...subscribed, ...required])] : [])
+-    : required;
++  // An empty subscription previously meant every default Telegram update.
++  const defaults = ['message','edited_message','channel_post','edited_channel_post','business_connection',
++    'business_message','edited_business_message','deleted_business_messages','guest_message','inline_query',
++    'chosen_inline_result','callback_query','widget_query','shared_widget_query','shipping_query','pre_checkout_query',
++    'purchased_paid_media','poll','poll_answer','my_chat_member','chat_join_request','chat_boost','removed_chat_boost',
++    'managed_bot','subscription','stopped_message_generation'];
++  const previous = subscribed?.length ? subscribed : existing.url ? defaults : [];
++  const updates = [...new Set([...previous, ...required])];
+   return telegram(env, "setWebhook", {
+     url, secret_token: env.WEBHOOK_SECRET, drop_pending_updates: false,
+     allowed_updates: updates,
+@@ -904,11 +914,12 @@ async function setup(request, env, config, store) {
+   return setupPage(`<p>Webhook подключён. Открой <a href="https://t.me/${config.name}">@${config.name}</a> и нажми Start.</p>`);
+ }
+ 
++const verifiedGroupSubscription = new WeakSet();
+ async function syncTelegramEntry(env, store, config) {
+   const webhookUrl = webhookAddress(config);
+   const saved = await store.first("SELECT menu_url, checkout_webhook_url FROM telegram_entry WHERE id = 1");
+   const syncMenu = env.SYNC_TELEGRAM_MENU === "1" && saved?.menu_url !== config.app;
+-  if (!syncMenu && saved?.checkout_webhook_url === webhookUrl && !bankChatUpdates(env)) return;
++  if (!syncMenu && saved?.checkout_webhook_url === webhookUrl && !bankChatUpdates(env) && verifiedGroupSubscription.has(store.db)) return;
+ 
+   const bot = await telegram(env, "getMe");
+   if (bot.username?.toLowerCase() !== config.name.toLowerCase()) {
+@@ -929,6 +940,7 @@ async function syncTelegramEntry(env, store, config) {
+     });
+     if (updated !== true) throw new Error("Telegram menu was not updated");
+   }
++  if (webhookConnected) verifiedGroupSubscription.add(store.db);
+   await saveTelegramEntry(store, bot, syncMenu ? config.app : "", webhookConnected ? webhookUrl : null);
+ }
+ 
+@@ -974,7 +986,7 @@ export default {
        if (error instanceof RequestError) {
          if (path === "/setup") return setupPage("<p>Ошибка подключения. Проверь токен и сеть бота.</p>", error.status);
          if (path === "/telegram" && error.telegramCode === 403) return new Response("OK");
@@ -831,11 +1084,11 @@ index 7b304ea..887d01e 100644
        }
        console.error("ARSLAN BOOST Worker failed");
        return json({ error: "service_unavailable" }, 503);
-@@ -987,6 +990,7 @@ export default {
+@@ -987,6 +999,7 @@ export default {
      if (config.webhookReady && (env.SYNC_TELEGRAM_MENU === "1" || config.enabled || bankChatUpdates(env))) {
        background(ctx, syncTelegramEntry(env, store, config));
      }
-+    background(ctx,expireGroupActivity(store));
++    background(ctx,expireGroupActivity(env,store));
      if (!telegramId(env.ADMIN_ID)) return;
      if (["private", "manual"].includes(env.P2P_MODE)) background(ctx, p2pCron(store, env));
      background(ctx, (async () => {
@@ -1003,10 +1256,56 @@ index e53ec7d..b464d68 100644
      all:selector=>selector==='[data-history]'?tabs:selector==='#filters [data-history-filter]'?filters:[],
      glyph:()=>'<svg class="glyph"></svg>',
 diff --git a/tests/p2p.test.mjs b/tests/p2p.test.mjs
-index d012190..4107c26 100644
+index d012190..6f9bf70 100644
 --- a/tests/p2p.test.mjs
 +++ b/tests/p2p.test.mjs
-@@ -1851,6 +1851,7 @@ test('Closed Telegram support refuses casual messages and requires new conversat
+@@ -505,7 +505,7 @@ test("the scheduled deployment updates the default chat button once", async t =>
+     getMe: { username: "arslan_test_bot", has_main_web_app: true },
+     getChatMenuButton: { type: "web_app", text: "Shop", web_app: { url: "https://example.net/old" } },
+     getWebhookInfo: { url: base + "/telegram" },
+-    setChatMenuButton: true,
++    setWebhook: true, setChatMenuButton: true,
+   };
+   t.mock.method(globalThis, "fetch", async (url, init) => {
+     const method = url.split("/").at(-1);
+@@ -518,7 +518,8 @@ test("the scheduled deployment updates the default chat button once", async t =>
+   await system.drain();
+   await system.scheduled();
+   await system.drain();
+-  assert.deepEqual(calls.map(call => call.method), ["getMe", "getChatMenuButton", "getWebhookInfo", "setChatMenuButton"]);
++  assert.deepEqual(calls.map(call => call.method), ["getMe", "getChatMenuButton", "getWebhookInfo", "setWebhook", "setChatMenuButton"]);
++  assert.ok(calls.find(c=>c.method==="setWebhook").body.allowed_updates.includes("chat_member"));
+   assert.deepEqual(calls.at(-1).body.menu_button, { type: "web_app", text: "Shop", web_app: { url: miniApp } });
+   const {menu_url, webhook_connected, has_main_web_app} = system.db.prepare("SELECT * FROM telegram_entry WHERE id = 1").get();
+   assert.deepEqual([menu_url, webhook_connected, has_main_web_app], [miniApp, 1, 1]);
+@@ -559,7 +560,7 @@ test.skip("public Stars waits for the working webhook and preserves existing Tel
+   const updated = calls.find(call => call.method === "setWebhook").body;
+   assert.equal(updated.url, webhookUrl);
+   assert.equal(updated.drop_pending_updates, false);
+-  assert.deepEqual(updated.allowed_updates, ["message", "message_reaction", "pre_checkout_query", "callback_query"]);
++  assert.deepEqual(updated.allowed_updates, ["message", "message_reaction", "pre_checkout_query", "callback_query", "chat_member"]);
+   assert.equal((await system.send("/healthz", null, {}, "GET")).data.paymentsEnabled, true);
+ 
+   const { data: config } = await system.send("/api/config", null, {}, "GET");
+@@ -604,7 +605,7 @@ test("checks both bank chats for the connected admin and keeps Stars subscriptio
+   `).run(base, webhookUrl);
+   await system.scheduled();
+   await system.drain();
+-  assert.deepEqual(subscriptions, ["message", "pre_checkout_query", "callback_query", "message_reaction", "business_message"]);
++  assert.deepEqual(subscriptions, ["message", "pre_checkout_query", "callback_query", "message_reaction", "business_message", "chat_member"]);
+   assert.equal(calls.find(call => call.method === "setWebhook").body.drop_pending_updates, false);
+ 
+   const cardXabar = {
+@@ -649,7 +650,7 @@ test.skip("verified CardXabar and HUMO business notifications settle without RRN
+   await system.scheduled();
+   await system.drain();
+   assert.deepEqual(calls.find(call => call.method === "setWebhook").body.allowed_updates,
+-    [...updates, "business_message"]);
++    [...updates, "business_message", "chat_member"]);
+   const topup = await system.api(1, "invoice", { amount: 50000, method: "uzcard" });
+   const order = await system.api(2, "donat/create", { product: "spin_coins", option: "100", detail: "123456",
+     expectedAmount: 21990, requestId: "business-humo", paymentMethod: "humo" });
+@@ -1851,6 +1852,7 @@ test('Closed Telegram support refuses casual messages and requires new conversat
    await sys.webhook({callback_query:{id:'new-chat-customer',data:'support:new',from:{id:11},
      message:{chat:{type:'private',id:11}}}});
    assert.equal((await sys.api(11,'support/history')).data.open,true);
@@ -1014,7 +1313,7 @@ index d012190..4107c26 100644
    await sys.webhook({message:{chat:{type:'private',id:11},from:{id:11},message_id:45,text:'Help again'}});
    assert.equal((await sys.api(11,'support/history')).data.messages.length,2);
    await sys.drain();
-@@ -1888,7 +1889,7 @@ test('/start has a horizontal Uzbek photo and exactly one Mini App button',async
+@@ -1888,7 +1890,7 @@ test('/start has a horizontal Uzbek photo and exactly one Mini App button',async
    assert.match(greeting.body.caption,/5404614161831341267/);
    assert.match(greeting.body.caption,/5404812288672703936/);
    assert.match(greeting.body.caption,/5123093405064234078/);
@@ -1023,44 +1322,82 @@ index d012190..4107c26 100644
    assert.equal(greeting.body.parse_mode,'HTML');
    assert.match(greeting.body.photo,/\/assets\/start-welcome-v6\.jpg$/);
    const buttons=greeting.body.reply_markup.inline_keyboard.flat();
-@@ -2155,3 +2156,51 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
+@@ -2155,3 +2157,89 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
    const current=(await sys.api(1,`invoice/${placed.data.invoiceId}/status`,null,'GET')).data;
    assert.equal(current.expiresAt-current.createdAt,600);
  });
 +
-+test('Group settings require local administrators and isolate spam, welcome and retries',async t=>{
-+  const calls=[];
-+  t.mock.method(globalThis,'fetch',async(url,options)=>{
-+    const method=url.split('/').at(-1), body=JSON.parse(options.body);
++test('Group rules, exact welcome import, per-person expiry and AI work through Telegram', async t => {
++  const calls=[], prompts=[];
++  let resultId=200, seq=0;
++  t.mock.method(globalThis,'fetch',async(url,opts)=>{
++    const method=url.split('/').at(-1), body=JSON.parse(opts.body);
 +    calls.push({method,body});
-+    const admin=[40,900000].includes(body.user_id);
-+    const result=method==='getChatMember'?{status:admin?'administrator':'member',can_delete_messages:admin}:{message_id:55};
++    const isAdmin=[40,900000].includes(body.user_id);
++    const result=method==='getChatMember'?{status:isAdmin?'administrator':'member',can_restrict_members:isAdmin,can_delete_messages:isAdmin}
++      : {message_id:++resultId};
 +    return Response.json({ok:true,result});
 +  });
-+  const sys=app(), chat={type:'supergroup',id:-100100,title:'Arslan'};
-+  let seq=0;
++  const sys=app({AI:{run:async(model,params)=>{prompts.push(params.messages);return {response:'Salom!'};}}});
++  const chat={type:'supergroup',id:-100100,title:'Arslan'};
 +  const message=(from,text,extra={})=>sys.webhook({message:{chat,from:{id:from},message_id:++seq,text,...extra}});
-+  const click=(from,value)=>sys.webhook({callback_query:{id:String(++seq),from:{id:from},data:'af:'+value,message:{chat,message_id:10}}});
-+  const deleted=()=>calls.filter(x=>x.method==='deleteMessage').map(x=>x.body.message_id);
-+  assert.equal((await message(40,'/antiflood')).status,200);
-+  await click(21,'on');
++  const sent=(method)=>calls.filter(x=>x.method===method).map(x=>x.body);
++  await message(21,'/chat_on');
 +  assert.equal(sys.db.prepare('SELECT count(*) AS n FROM group_preferences').get().n,0);
-+  await click(40,'on');
-+  for(let i=0;i<3;i++)assert.equal((await message(21,'  Salom  ')).status,200);
-+  assert.deepEqual(deleted(),[seq]);
-+  await message(22,'Salom'); assert.equal(deleted().length,1);
-+  await click(40,'strict');
-+  for(let i=0;i<4;i++) await message(27,'Xabar '+i);
-+  assert.equal(deleted().at(-1),seq);
-+  const size=deleted().length;
-+  for(let i=0;i<6;i++) await message(40,'bir xil');
-+  assert.equal(deleted().length,size);
-+  await click(40,'greet'); await message(40,'/salom Salom, {ism}! {guruh}');
-+  const join={chat,from:{id:30},message_id:++seq,new_chat_members:[{id:30,first_name:'Ali'}]};
++  await message(40,'/chat_on');
++  for(let i=0;i<4;i++) await message(21,'Salom');
++  assert.equal(sent('restrictChatMember').length,0);
++  const fifth={chat,from:{id:21},message_id:++seq,text:' SALOM '};
++  await sys.webhook({message:fifth});await sys.webhook({message:fifth});
++  assert.equal(sent('restrictChatMember').length,1);
++  assert.equal(sent('restrictChatMember')[0].user_id,21);
++  assert.ok(Math.abs(sent('restrictChatMember')[0].until_date-Date.now()/1000-60)<3);
++  assert.deepEqual(sent('deleteMessage').map(x=>x.message_id),[fifth.message_id]);
++  for(let i=0;i<10;i++) await message(23,'Xabar '+i);
++  assert.equal(sent('deleteMessage').length,1);
++  await message(23,'yana');assert.equal(sent('deleteMessage').length,2);
++  assert.equal(sent('restrictChatMember').length,1);
++  sys.db.prepare('UPDATE group_activity SET stamp=unixepoch()-6 WHERE author=23').run();
++  await message(23,'yangi');assert.equal(sent('deleteMessage').length,2);
++  for(let i=0;i<7;i++) await message(40,'admin matni');
++  assert.equal(sent('deleteMessage').length,2);
++  const date=Math.floor(Date.now()/1000);
++  const users=[{id:31,username:'new_arslan',first_name:'Ali'},{id:32,first_name:'Alisher'}];
++  const join={chat,from:{id:30},date,message_id:++seq,new_chat_members:users};
++  await sys.webhook({chat_member:{chat,date,old_chat_member:{status:'left'},new_chat_member:{status:'member',user:users[0]}}});
 +  await sys.webhook({message:join});await sys.webhook({message:join});
-+  assert.equal(calls.filter(x=>x.body.text==='Salom, Ali! Arslan').length,1);
-+  await click(40,'off'); await message(21,'Salom'); assert.equal(deleted().length,size);
++  assert.equal(sent('sendPhoto').length,2);
++  assert.match(sent('sendPhoto')[0].photo,/chat-welcome.jpg$/);
++  assert.match(sent('sendPhoto')[0].caption,/Salom @new_arslan/);
++  assert.ok(sent('sendPhoto')[1].caption_entities.some(e=>e.type==='text_mention' && e.user.id===32));
++  const original={photo:[{file_id:'original_photo'}],caption:'💬 Salom @name! ⚡',caption_entities:[
++    {type:'custom_emoji',offset:0,length:2,custom_emoji_id:'123'},
++    {type:'mention',offset:9,length:5},{type:'custom_emoji',offset:16,length:1,custom_emoji_id:'456'}]};
++  await message(40,'/salom_namuna',{reply_to_message:original});
++  await message(44,undefined,{new_chat_members:[{id:44,username:'ancha_uzun',first_name:'A'}]});
++  const custom=sent('sendPhoto').at(-1);
++  assert.equal(custom.photo,'original_photo');assert.equal(custom.caption,'💬 Salom @ancha_uzun! ⚡');
++  assert.equal(custom.caption_entities.find(e=>e.custom_emoji_id==='456').offset,custom.caption.indexOf('⚡'));
++  const due=sys.db.prepare('SELECT mid,due FROM group_welcomes').all();
++  assert.equal(due.length,3); assert.ok(due.every(row=>Math.abs(row.due-date-300)<5));
++  await sys.scheduled();await sys.drain();assert.equal(sent('deleteMessage').length,2);
++  sys.db.prepare('UPDATE group_welcomes SET due=unixepoch()-1').run();
++  await sys.scheduled();await sys.drain();await sys.scheduled();await sys.drain();
++  assert.deepEqual(sent('deleteMessage').slice(2).map(x=>x.message_id).sort(),due.map(x=>x.mid).sort());
++  await message(28,'oddiy savol');assert.equal(prompts.length,0);
++  const question={chat,from:{id:28},message_id:++seq,text:'@arslan_test_bot qalaysiz?'};
++  await sys.webhook({message:question});await sys.webhook({message:question});
++  assert.equal(prompts.length,1);assert.equal(prompts[0].at(-1).content,'qalaysiz?');
++  await message(28,'yana',{reply_to_message:{from:{is_bot:true,id:900000},text:'Salom!'}});
++  assert.equal(prompts.length,2);assert.equal(prompts[1][1].role,'assistant');
++  await message(28,'/ai@other_bot salom');assert.equal(prompts.length,2);
++  await sys.webhook({callback_query:{id:'off',from:{id:40},data:'af:ai_off',message:{chat,message_id:5}}});
++  await message(28,'/ai yana');assert.equal(prompts.length,2);
++  await message(40,'/salom Salom, {ism}! {guruh}');
++  await message(45,undefined,{new_chat_members:[{id:45,first_name:'Gul'}]});
++  assert.equal(sent('sendMessage').at(-1).text,'Salom, Gul! Arslan');
 +});
++
 +test('Support applies the same cooldown to Telegram and mini app and keeps retries idempotent',async t=>{
 +  const responses=[];
 +  t.mock.method(globalThis,'fetch',async(url,opts)=>{responses.push(JSON.parse(opts.body));return Response.json({ok:true,result:{message_id:20}});});
@@ -1090,10 +1427,18 @@ index 7e60db4..51c4353 100644
    assert.match(css,/\.v10-core-tabs button\[aria-pressed="true"\]/);
  });
 diff --git a/wrangler.production.jsonc b/wrangler.production.jsonc
-index 5ce277f..9fd4390 100644
+index 5ce277f..dca18a3 100644
 --- a/wrangler.production.jsonc
 +++ b/wrangler.production.jsonc
-@@ -30,7 +30,7 @@
+@@ -20,6 +20,7 @@
+       "/payment-terms"
+     ]
+   },
++  "ai": { "binding": "AI" },
+   "d1_databases": [
+     {
+       "binding": "DB",
+@@ -30,7 +31,7 @@
    ],
    "vars": {
      "BOT_USERNAME": "arslanboostbot",

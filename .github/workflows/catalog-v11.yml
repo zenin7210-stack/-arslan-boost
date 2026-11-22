@@ -56,8 +56,12 @@ jobs:
           def digest(b): return hashlib.sha256(b).hexdigest()
           live=digest(subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',
               origin+'/index.html?verify='+os.environ['GITHUB_SHA']]))
-          ready=current=='755da60a-2370-4751-a011-dc60f3d83d1d' and live=='4600a7d56798f07e9daa725cc476748bcb123423dcbd12719db0bf68858e83b5'
-          same=live==digest(open('public/index.html','rb').read())
+          ready=current=='93573559-b811-4738-80b7-7b283e2d15d5' and live=='20b9cfaf637a886228af21e64d7285beaa48f3701f150a1dec3433fc54f4d93e'
+          same=False
+          if not ready and live==digest(open('public/index.html','rb').read()):
+              marker='/assets/donat/catalog/chat-welcome.jpg'
+              check=subprocess.run(['curl','-fsSL','--max-time','25',origin+marker],capture_output=True)
+              same=check.returncode==0 and check.stdout==open('public'+marker,'rb').read()
           if not ready and not same: raise RuntimeError('Active production build differs from the verified release')
           with open(os.environ['GITHUB_OUTPUT'],'a') as output: print('deploy='+str(ready).lower(),file=output)
           PY
@@ -75,7 +79,7 @@ jobs:
           from pathlib import Path
           base=json.load(open('wrangler.production.jsonc'))['vars']['MINIAPP_URL'].split('/?')[0]
           root=Path('public')
-          files=['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/donat/catalog.json']
+          files=['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/donat/catalog.json','assets/donat/catalog/chat-welcome.jpg']
           files+=sorted(str(p.relative_to(root)) for p in (root/'assets/donat/catalog').glob('*.webp'))
           def fetch(url):
               return subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',url])
