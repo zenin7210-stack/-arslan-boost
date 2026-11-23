@@ -56,12 +56,12 @@ jobs:
           def digest(b): return hashlib.sha256(b).hexdigest()
           live=digest(subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',
               origin+'/index.html?verify='+os.environ['GITHUB_SHA']]))
-          ready=current=='a4e59543-3ced-427d-885a-f075da35592e' and live=='20b9cfaf637a886228af21e64d7285beaa48f3701f150a1dec3433fc54f4d93e'
+          ready=current=='f2345daa-120c-4d61-ad89-9607495b723d' and live=='20b9cfaf637a886228af21e64d7285beaa48f3701f150a1dec3433fc54f4d93e'
           same=False
           if not ready and live==digest(open('public/index.html','rb').read()):
-              marker='/healthz?chat_ai=1'
+              marker='/healthz?welcome=1'
               check=subprocess.run(['curl','-fsSL','--max-time','25',origin+marker],capture_output=True)
-              same=check.returncode==0 and json.loads(check.stdout).get('revision')=='model-18'
+              same=check.returncode==0 and json.loads(check.stdout).get('welcomeLifetimeSeconds')==3600
           if not ready and not same: raise RuntimeError('Active production build differs from the verified release')
           with open(os.environ['GITHUB_OUTPUT'],'a') as output: print('deploy='+str(ready).lower(),file=output)
           PY
@@ -90,6 +90,7 @@ jobs:
                       body=fetch(url)
                       if body!=(root/path).read_bytes(): raise ValueError('Unexpected live asset: '+path)
                   assert json.loads(fetch(base+'/healthz'))['ok']
+                  assert json.loads(fetch(base+'/healthz?welcome=1')).get('welcomeLifetimeSeconds')==3600
                   break
               except Exception:
                   if attempt==7: raise
