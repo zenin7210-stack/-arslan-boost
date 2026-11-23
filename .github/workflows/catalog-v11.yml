@@ -56,7 +56,7 @@ jobs:
           def digest(b): return hashlib.sha256(b).hexdigest()
           live=digest(subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',
               origin+'/index.html?verify='+os.environ['GITHUB_SHA']]))
-          ready=current=='071b2e86-1aa4-4ee1-9643-efb5b1c0f856' and live=='cee585411480ce02d9b7cf0afae855ffbc360c428ee4cbaf933f3fa44471cde6'
+          ready=current=='52fe7213-7465-454d-ab17-aca199674ba7' and live=='6e6de8f8e0a02791d76f3017900a5bdb72f7651b2ddc7479909c11a25422be9b'
           same=False
           if not ready and live==digest(open('public/index.html','rb').read()):
               marker='/healthz?welcome=1'

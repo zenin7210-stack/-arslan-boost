@@ -1,0 +1,176 @@
+diff --git a/public/assets/donat/shop.css b/public/assets/donat/shop.css
+index 22db2b4..a4add46 100644
+--- a/public/assets/donat/shop.css
++++ b/public/assets/donat/shop.css
+@@ -896,28 +896,28 @@ body:has(#donat.active)::before {
+ .shop-banner { aspect-ratio: 5.38; border: 1px solid #55c4ff; border-radius: 13px; box-shadow: 0 0 6px #0088c746; margin-bottom: 7px; }
+ .category-tabs { gap: 5px; margin-bottom: 8px; }
+ .shop-page .category-tabs button { min-height: 33px; }
+-.product-grid { gap: 8px; }
++.product-grid { gap: 6px; }
+ .shop-page .product-card {
+-  overflow: hidden; padding: 0 0 8px; border-radius: 13px; min-height: 0;
++  overflow: hidden; padding: 0 0 6px; border-radius: 12px; min-height: 0;
+   border-color: var(--edge,#53bcff); background: linear-gradient(150deg,var(--aura,#163a56),var(--card-base,#082133));
+   box-shadow: inset 0 0 4px var(--rim,#1685c255); align-items: stretch; justify-content: flex-start;
+ }
+ .shop-page .product-card.pass { --edge:#8ec2e1; --aura:#213c49; --card-base:#112634; }
+-.shop-page .product-card .card-art { width: 100%; height: auto; aspect-ratio: 2.28; object-fit: cover; border-radius: 0; }
++.shop-page .product-card .card-art { width: 100%; height: auto; aspect-ratio: 1.97; object-fit: cover; border-radius: 0; }
+ .shop-page .product-card.gold .card-art { object-position: 40% center; }
+-.shop-page .product-card .card-name { margin: 7px 5px 0; font-size: clamp(14px,3.8vw,17px); font-weight: 730; line-height: 1.16; }
+-.shop-page .product-card .card-desc { margin: 2px 4px 0; color: #d3e3ef; font-size: clamp(11px,2.9vw,13px); line-height: 1.2; }
++.shop-page .product-card .card-name { margin: 5px 3px 0; font-size: clamp(12px,3.2vw,15px); font-weight: 730; line-height: 1.16; }
++.shop-page .product-card .card-desc { margin: 2px 3px 0; color: #d3e3ef; font-size: clamp(10px,2.6vw,12px); line-height: 1.2; }
+ .section-title { margin: 12px 2px 7px; }
+ .shop-page .section-title .ui-icon, .shop-page .show-all { color: #26dded; }
+-.game-grid { gap: 8px; }
+-.game-art { aspect-ratio: 2.5; object-fit: cover; border: 1px solid #82b5d6; border-radius: 10px; }
+-.game-name { color: #fff; font-size: clamp(12px,3.2vw,15px); font-weight: 650; }
++.game-grid { gap: 5px; }
++.game-art { aspect-ratio: 1.95; object-fit: cover; border: 1px solid #82b5d6; border-radius: 9px; }
++.game-card:is([data-product="pubg_mobile"],[data-product="mobile_legends"]) .game-art { object-position: left center; }
++.game-name { color: #fff; font-size: clamp(10px,2.65vw,13px); font-weight: 650; }
+ @media (max-width: 540px) {
+-  .shop-page :is(.product-grid,.game-grid) { grid-template-columns: repeat(2,minmax(0,1fr)); }
+   .shop-page .category-tabs button, .app:has(#donat.active) .service-switch button { min-height: 40px; }
+   .shop-page .searchbox { min-height: 40px; }
+ }
+-.catalog-sections { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: 12px; }
++.catalog-sections { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin-top: auto; padding-top: 12px; }
+ .catalog-section {
+   display: flex; width: 100%; align-items: center; gap: 7px; min-height: 56px; padding: 8px 10px; border: 1px solid #397599;
+   border-radius: 13px; background: linear-gradient(125deg,#102f46,#091e31); color: #f1f8ff; text-align: left;
+@@ -931,7 +931,10 @@ body:has(#donat.active)::before {
+   margin: 0; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+   border: 1px solid #305a75; border-radius: 12px; background: #0b2336;
+ }
+-.review-post img { width: 84px; max-width: 30%; height: 84px; flex: none; object-fit: contain; background: #061a29; border-radius: 7px; }
++.review-post { gap: 10px; padding: 8px 10px; min-height: 48px; color: inherit; text-decoration: none; }
++.review-post:focus-visible { outline: 2px solid #43d5ff; outline-offset: -2px; }
++.review-post:active { background: #10334b; }
++.review-post img { width: 64px; max-width: 28%; height: 64px; flex: none; object-fit: contain; background: #061a29; border-radius: 7px; }
+ .review-post figure { margin: 0; min-width: 0; }
+ .review-list blockquote { margin: 0; color: #edf7ff; line-height: 1.4; font-size: 15px; white-space: pre-line; overflow-wrap: anywhere; }
+ .review-list figcaption { margin-top: 5px; font-size: 12px; color: #a5c2d6; }
+diff --git a/public/assets/donat/shop.js b/public/assets/donat/shop.js
+index c0ddde7..0908dfb 100644
+--- a/public/assets/donat/shop.js
++++ b/public/assets/donat/shop.js
+@@ -155,9 +155,12 @@ window.initArslanShop = function ({
+   }
+ 
+   function reviewCard(review) {
+-    const photo = review.photo ? `<img src="${escape(review.photo)}" loading="lazy" alt="" width="88" height="88">` : '';
++    const channel = 'https://t.me/arslanotziv';
++    const href = Number.isSafeInteger(review.id) && review.id > 0 ? channel + '/' + review.id : channel;
++    const photo = review.photo ? `<img src="${escape(review.photo)}" loading="lazy" alt="" width="64" height="64">` : '';
+     const credit = ['@arslanotziv', review.author].filter(Boolean).join(' · ');
+-    return `<div class="review-post">${photo}<figure><blockquote dir="auto">${escape(review.text)}</blockquote><figcaption>${escape(credit)}</figcaption></figure></div>`;
++    const caption = review.text.trim().replace(/\n\s*\n/g, '\n');
++    return `<a class="review-post" href="${href}">${photo}<figure><blockquote dir="auto">${escape(caption)}</blockquote><figcaption>${escape(credit)}</figcaption></figure><span class="section-chevron" aria-hidden="true">›</span></a>`;
+   }
+ 
+   function renderOpenReviews() {
+@@ -171,7 +174,14 @@ window.initArslanShop = function ({
+     openSheet(t('reviews'), `<div id="review-content" class="review-list"></div>
+       <button class="secondary" id="open-review-channel" type="button">${t('openChannel')} ↗</button>`);
+     sheetBody.querySelector('#open-review-channel').onclick = () => openTelegram('https://t.me/arslanotziv');
+-    sheetBody.querySelector('#review-content').addEventListener('error', event => {
++    const list = sheetBody.querySelector('#review-content');
++    list.addEventListener('click', event => {
++      const link = event.target.closest('a.review-post');
++      if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
++      event.preventDefault();
++      openTelegram(link.href);
++    });
++    list.addEventListener('error', event => {
+       if (event.target.tagName === 'IMG') event.target.hidden = true;
+     }, true);
+     renderOpenReviews();
+diff --git a/public/index.html b/public/index.html
+index a6a7e97..36750df 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -28,7 +28,7 @@
+   </style>
+   <link rel="stylesheet" href="app.css?v=20261120-pro-v2">
+   <link rel="stylesheet" href="assets/p2p.css?v=20261120-v9">
+-  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-sections21">
++  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-compact22">
+ </head>
+ <body>
+   <main class="app">
+@@ -217,7 +217,7 @@
+   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+   <button type="button" id="keyboard-done" class="keyboard-done" data-i18n="keyboardDone" tabindex="-1" hidden>Tayyor</button>
+   <div class="intro" id="intro" aria-hidden="true"><div class="intro-content"><img class="intro-emblem" src="assets/intro-emblem.webp" width="1280" height="1280" alt="" decoding="async" fetchpriority="high"><div class="intro-brand">ARSLAN BOOST</div><div class="intro-game">STANDOFF <span>2</span></div><p class="intro-subtitle" data-i18n="introSubtitle">Rank oshirish xizmati</p></div></div>
+-  <script src="assets/donat/shop.js?v=catalog11-sections21"></script>
++  <script src="assets/donat/shop.js?v=catalog11-compact22"></script>
+   <script src="assets/p2p.js?v=20261120-v9"></script>
+   <script src="app.js?v=catalog11-sections21"></script>
+ </body></html>
+diff --git a/tests/catalog-browser.py b/tests/catalog-browser.py
+index 7b49736..92e4563 100644
+--- a/tests/catalog-browser.py
++++ b/tests/catalog-browser.py
+@@ -33,7 +33,8 @@ def check(browser, url, width, language):
+     trigger.click()
+     reviews = page.locator("#review-content")
+     expect(reviews.locator("blockquote").first).to_contain_text("Raxmat sog boling")
+-    expect(reviews.locator("a, input, textarea, form, [contenteditable=true]")).to_have_count(0)
++    expect(reviews.get_by_role("link").first).to_have_attribute("href", "https://t.me/arslanotziv")
++    expect(reviews.locator("input, textarea, form, [contenteditable=true]")).to_have_count(0)
+     page.locator("#close-sheet").click()
+     for item in ITEMS:
+         tile = page.locator(f'button[data-product="{item["id"]}"]')
+@@ -111,7 +112,7 @@ def check_active_order(browser, url):
+             return route.abort()
+         if "/api/public/review-channel" in address:
+             return route.fulfill(json={"posts": [
+-                {"id": 91, "text": "Test <b>one</b>", "photo": ""},
++                {"id": 91, "text": "#56\n\nTest <b>one</b>", "photo": "assets/donat/catalog/review-40.webp"},
+                 {"id": 90, "text": "Test two", "photo": ""},
+             ]})
+         fixtures = {"config": {"arslanBoostApi": True}, "state": {"payments": [payment], "orders": [boost]},
+@@ -129,21 +130,23 @@ def check_active_order(browser, url):
+     trigger.click()
+     reviews = page.locator("#review-content")
+     expect(reviews.locator("blockquote")).to_have_count(2)
+-    expect(reviews.locator("blockquote").first).to_have_text("Test <b>one</b>")
+-    reviews.locator(".review-post").first.click()
+-    expect(reviews.locator("a, button, blockquote b, input, textarea, form, [contenteditable=true]")).to_have_count(0)
++    expect(reviews.locator("blockquote").first).to_contain_text("Test <b>one</b>")
++    expect(reviews.locator("input, textarea, form, blockquote b, [contenteditable=true]")).to_have_count(0)
+     assert page.evaluate("openedChannels") == []
++    reviews.locator("img").first.click()
++    reviews.locator("blockquote").nth(1).click()
++    assert page.evaluate("openedChannels") == ["https://t.me/arslanotziv/91", "https://t.me/arslanotziv/90"]
+     page.locator("#open-review-channel").click()
+-    assert page.evaluate("openedChannels") == ["https://t.me/arslanotziv"]
++    assert page.evaluate("openedChannels").pop() == "https://t.me/arslanotziv"
+     page.locator("#close-sheet").click()
+ 
+     for width, height in [(390, 720), (430, 800), (430, 930), (320, 568)]:
+         page.set_viewport_size({"width": width, "height": height})
+         covers = [art.bounding_box() for art in page.locator(".product-card .card-art").all()]
+-        assert len(covers) == 6 and len({round(box["x"]) for box in covers}) == 2
+-        assert min(box["width"] for box in covers) >= width * 0.43
+-        assert min(box["height"] for box in covers) >= width * 0.19
+-        assert len({round(tile.bounding_box()["x"]) for tile in tiles.all()}) == 2
++        assert len(covers) == 6 and len({round(box["x"]) for box in covers}) == 3
++        assert all(width * 0.27 <= box["width"] <= width / 3 for box in covers)
++        assert all(44 <= box["height"] <= width * 0.17 for box in covers)
++        assert len({round(tile.bounding_box()["x"]) for tile in tiles.all()}) == 4
+         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+         page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+         sections = page.locator(".catalog-sections").bounding_box()
+@@ -152,6 +155,8 @@ def check_active_order(browser, url):
+         assert 0 <= gap <= 32, (width, height, gap)
+         assert row.bounding_box()["height"] >= 48
+         assert abs(trigger.bounding_box()["y"] - row.bounding_box()["y"]) < 1
++        games = page.locator(".game-grid").bounding_box()
++        assert trigger.bounding_box()["y"] >= games["y"] + games["height"]
+         print(f"Verified {width}×{height}: covers {covers[0]['width']:.0f}×{covers[0]['height']:.0f}, gap above navigation {gap:.0f}px")
+ 
+     row.click()
