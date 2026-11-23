@@ -861,10 +861,10 @@ index 0000000..f65288e
 +}
 diff --git a/src/group-ai.mjs b/src/group-ai.mjs
 new file mode 100644
-index 0000000..2c1604b
+index 0000000..26257f6
 --- /dev/null
 +++ b/src/group-ai.mjs
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,241 @@
 +import { telegram, botToken } from './telegram.mjs';
 +
 +import { shopQuote } from './chat-prices.mjs';
@@ -872,6 +872,25 @@ index 0000000..2c1604b
 +
 +const mainModel = '@cf/openai/gpt-oss-120b';
 +const backupModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
++const solModel = 'openai/gpt-6.2-sol';
++
++function primaryModel(env) {
++  return env.GROUP_CHAT_MODEL === solModel ? solModel : mainModel;
++}
++
++function modelName(model) {
++  return model === solModel ? 'GPT-6.2 Sol' : model.split('/').at(-1);
++}
++
++function modelAnswer(text, lang, model) {
++  const q = text.toLowerCase().replace(/[-‐‑]/g,' ').replace(/[?!.,]+$/u,'').trim();
++  const russian = /^(?:(?:скажи[, ]+)?(?:какая|какой|какую|на какой|что за) (?:у тебя |ты |у вас )?(?:верси[яию]|модел[ьи]|gpt|гпт)(?: (?:gpt|гпт|у тебя|у вас|ты|сейчас|ии|работаешь|используешь|используется|подключена|стоишь))*|ты (?:gpt|гпт)(?: [\d.]+)?)$/u;
++  const uzbek = /^(?:(?:sen |siz |senda |sizda )?(?:qaysi|qanaqa|qanday|қайси|қандай) (?:gpt|гпт|model|модел|versiya|версия)(?:san|siz|da|dan|ni|isan|isaniz|да|сан|сиз)?(?: (?:modelisan|versiyasi|versiyasisan|ishlaysan|ishlaysiz|foydalanasan|foydalanasiz|ишлайсан|ишлайсиз))?|(?:gpt|model|versiya)(?:ing|ingiz|si|siya)? (?:qaysi|nechi|qancha))$/u;
++  if (!russian.test(q) && !uzbek.test(q)) return null;
++  const name = modelName(model);
++  return lang === 'ru' ? 'Основная модель чата — ' + name + '.' : 'Chatning asosiy modeli — ' + name + '.';
++}
++
 +const strings = {
 +  uz: { ask:'Savolingizni yozing.', wait:'Savollar juda tez kelyapti. Bir daqiqadan keyin yana yozing.',
 +    unavailable:'AI bilan aloqa uzildi. Savolni yana yuborishingiz mumkin.' },
@@ -969,7 +988,7 @@ index 0000000..2c1604b
 +
 +function finalText(result) {
 +  const value=result?.response ?? result?.choices?.[0]?.message?.content ?? result?.output_text ??
-+    result?.output?.filter(x=>x.type==='message').flatMap(x=>x.content || []).filter(x=>x.type==='output_text').map(x=>x.text).join('\n');
++    result?.output?.filter(x=>x.type==='message' && (!x.phase || x.phase==='final_answer')).flatMap(x=>x.content || []).filter(x=>x.type==='output_text').map(x=>x.text).join('\n');
 +  if(typeof value!=='string') return '';
 +  // Some inference APIs expose analysis separately. Only send the final user-visible text.
 +  if(value.includes('<think>') && !value.includes('</think>')) return '';
@@ -978,11 +997,24 @@ index 0000000..2c1604b
 +
 +async function inference(env,messages) {
 +  const detailed=wantsDetail(messages.at(-1).content);
-+  for (const model of [mainModel,backupModel]) {
++  const primary = primaryModel(env);
++  for (const model of primary === solModel ? [solModel, mainModel] : [mainModel, backupModel]) {
 +    let timer;
 +    try {
-+      const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('inference_timeout')),model===mainModel ? (detailed?12000:6500) : 4500);});
-+      const result=await Promise.race([env.AI.run(model,{messages,max_tokens:detailed?720:320,temperature:0.25,...(model===mainModel?{reasoning_effort:'low'}:{})}),timeout]);
++      const instruction = {role:'system', content:messages[0].content +
++        ' Runtime model serving this response: '+modelName(model)+'. Use this exact name if asked about your model.'};
++      const input = [instruction, ...messages.slice(1)];
++      const timeoutMs = model === primary ? (detailed ? 12000 : 6500) : 4500;
++      const timeout = new Promise((_,reject)=>{
++        timer=setTimeout(()=>reject(new Error('inference_timeout')),timeoutMs);
++      });
++      const effort = detailed ? 'medium' : 'low';
++      const request = model === solModel
++        ? env.AI.run(model,{input,store:false,max_output_tokens:detailed?1000:400,reasoning:{effort}},
++            {gateway:{id:'default',collectLog:false}})
++        : env.AI.run(model,{messages:input,max_tokens:detailed?850:320,temperature:0.25,
++            ...(model===mainModel?{reasoning_effort:effort}:{})});
++      const result=await Promise.race([request,timeout]);
 +      const text=concise(finalText(result),detailed);
 +      if (text) return {text,model};
 +      console.warn('Arslan group AI: empty output',model);
@@ -1003,7 +1035,7 @@ index 0000000..2c1604b
 +    chat,reply.message_id,author) : null;
 +  const history=prior?.history ? JSON.parse(prior.history) : reply?.text ? [{role:'assistant',content:reply.text.slice(0,900)}] : [];
 +  let lang=language(question,prior?.lang);
-+  const quick=shopQuote(question,lang,prior ? history : []) ?? dateAnswer(question,lang,new Date()) ?? basicAnswer(question,lang);
++  const quick=modelAnswer(question,lang,primaryModel(env)) ?? shopQuote(question,lang,prior ? history : []) ?? dateAnswer(question,lang,new Date()) ?? basicAnswer(question,lang);
 +  const snow=quick===null ? snowRequest(question,history) : null;
 +  if(snow?.followup && prior?.lang) lang=prior.lang;
 +  const owner=crypto.randomUUID();
@@ -1046,7 +1078,7 @@ index 0000000..2c1604b
 +
 +// Verify the deployed AI binding once per chat release using public test questions only.
 +// Health requests only read these results and cannot trigger inference.
-+export const aiRevision='shop-17';
++export const aiRevision='model-18';
 +export async function verifyGroupModels(env,store) {
 +  if (!env.AI || env.TELEGRAM_TEST_ENV!=='0') return;
 +  const claim=await store.first(`INSERT INTO group_ai_checks(revision,attempts,stamp) VALUES(?,1,unixepoch())
@@ -1757,7 +1789,7 @@ index e53ec7d..b464d68 100644
      all:selector=>selector==='[data-history]'?tabs:selector==='#filters [data-history-filter]'?filters:[],
      glyph:()=>'<svg class="glyph"></svg>',
 diff --git a/tests/p2p.test.mjs b/tests/p2p.test.mjs
-index d012190..97a5fc3 100644
+index d012190..f6c492b 100644
 --- a/tests/p2p.test.mjs
 +++ b/tests/p2p.test.mjs
 @@ -25,7 +25,7 @@ function mockD1(beforeExactAmounts, beforeOrderGuard) {
@@ -1832,7 +1864,7 @@ index d012190..97a5fc3 100644
    assert.equal(greeting.body.parse_mode,'HTML');
    assert.match(greeting.body.photo,/\/assets\/start-welcome-v6\.jpg$/);
    const buttons=greeting.body.reply_markup.inline_keyboard.flat();
-@@ -2155,3 +2157,204 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
+@@ -2155,3 +2157,241 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
    const current=(await sys.api(1,`invoice/${placed.data.invoiceId}/status`,null,'GET')).data;
    assert.equal(current.expiresAt-current.createdAt,600);
  });
@@ -1959,6 +1991,11 @@ index d012190..97a5fc3 100644
 +  await sys.webhook({callback_query:{id:'no-flood',from:{id:40},data:'af:off',message:{chat,message_id:1}}});
 +  const last=()=>outbound.at(-1);
 +  await message('/ai 2+2?');assert.equal(last(),'4');assert.equal(modelCalls.length,0);
++  await message('/ai Какая версия гпт у тебя?');
++  assert.equal(last(),'Основная модель чата — gpt-oss-120b.');
++  await message('/ai Qaysi modelsan?');
++  assert.equal(last(),'Chatning asosiy modeli — gpt-oss-120b.');
++  assert.equal(modelCalls.length,0);
 +  const replyToBot=()=>({reply_to_message:{message_id:messageId,from:{id:900000,is_bot:true},text:last()}});
 +  await message('100 gold nechpul',replyToBot());
 +  assert.equal(last(),'100 Gold — bozor orqali 11 990 so‘m, ID orqali 24 990 so‘m.');
@@ -1995,6 +2032,38 @@ index d012190..97a5fc3 100644
 +  await message('/ai Почему?');assert.equal(last(),'Zaxira javobi.');
 +  const check=await sys.send('/healthz?chat_ai=1',null,{},'GET');
 +  assert.equal(check.data.attempts,0);
++});
++
++test('An explicitly selected GPT-6.2 Sol uses the gateway and falls back to the hosted chat model',async t=>{
++  const calls=[], texts=[];
++  let fails=false, mid=20;
++  const sys=app({GROUP_CHAT_MODEL:'openai/gpt-6.2-sol', AI:{run:async(model,input,options)=>{
++    calls.push({model,input,options});
++    if(model.startsWith('openai/')){
++      if(fails) throw Error('503');
++      return {output:[{type:'message',phase:'commentary',content:[{type:'output_text',text:'working'}]},
++        {type:'message',phase:'final_answer',content:[{type:'output_text',text:'Javob.'}]}]};
++    }
++    return {response:'Zaxira.'};
++  }}});
++  t.mock.method(globalThis,'fetch',async(url,opts)=>{
++    const body=JSON.parse(opts.body);
++    if(url.endsWith('/getChatMember'))return Response.json({ok:true,result:{status:'creator'}});
++    if(url.endsWith('/sendMessage'))texts.push(body.text);
++    return Response.json({ok:true,result:{message_id:++mid}});
++  });
++  const chat={id:-100340,type:'supergroup'};
++  const send=text=>sys.webhook({message:{from:{id:40},chat,text,message_id:++mid}});
++  await send('/chat_on');
++  await send('/ai Какая версия гпт у тебя?');assert.equal(texts.at(-1),'Основная модель чата — GPT-6.2 Sol.');
++  await send('/ai 100 gold nechpul');assert.match(texts.at(-1),/11 990/);assert.equal(calls.length,0);
++  await send('/ai Shaxmatni qanday o‘ynayman?');
++  assert.equal(texts.at(-1),'Javob.');
++  assert.equal(calls[0].options.gateway.id,'default');assert.equal(calls[0].input.store,false);
++  assert.match(calls[0].input.input[0].content,/Runtime model serving this response: GPT-6.2 Sol/);
++  fails=true;
++  await send('/ai Nega piyoda oldinga yuradi?');
++  assert.equal(texts.at(-1),'Zaxira.');assert.match(calls.at(-1).input.messages[0].content,/Runtime model serving this response: gpt-oss-120b/);
 +});
 +
 +test('chat answers the local year, keeps historical context and checks snowfall after asking for a city',async t=>{

@@ -56,12 +56,12 @@ jobs:
           def digest(b): return hashlib.sha256(b).hexdigest()
           live=digest(subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',
               origin+'/index.html?verify='+os.environ['GITHUB_SHA']]))
-          ready=current=='55731c20-2167-4f9d-a471-6dd695dc967b' and live=='20b9cfaf637a886228af21e64d7285beaa48f3701f150a1dec3433fc54f4d93e'
+          ready=current=='a4e59543-3ced-427d-885a-f075da35592e' and live=='20b9cfaf637a886228af21e64d7285beaa48f3701f150a1dec3433fc54f4d93e'
           same=False
           if not ready and live==digest(open('public/index.html','rb').read()):
               marker='/healthz?chat_ai=1'
               check=subprocess.run(['curl','-fsSL','--max-time','25',origin+marker],capture_output=True)
-              same=check.returncode==0 and json.loads(check.stdout).get('revision')=='shop-17'
+              same=check.returncode==0 and json.loads(check.stdout).get('revision')=='model-18'
           if not ready and not same: raise RuntimeError('Active production build differs from the verified release')
           with open(os.environ['GITHUB_OUTPUT'],'a') as output: print('deploy='+str(ready).lower(),file=output)
           PY
@@ -106,7 +106,7 @@ jobs:
               probe=subprocess.run(['curl','-fsSL','--max-time','8',origin+'/healthz?chat_ai=1&t='+str(time.time_ns())],capture_output=True)
               if probe.returncode==0:
                   check=json.loads(probe.stdout)
-                  if check.get('revision')=='shop-17' and check.get('uz') and check.get('ru'):
+                  if check.get('revision')=='model-18' and check.get('uz') and check.get('ru'):
                       print('Live bilingual check:',json.dumps(check))
                       break
               time.sleep(8)
