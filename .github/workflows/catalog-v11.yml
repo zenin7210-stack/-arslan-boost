@@ -96,6 +96,17 @@ jobs:
                   if attempt==7: raise
                   time.sleep(5)
           print(f'Verified {len(files)} live files and /healthz.')
+          result=subprocess.run(['curl','-sS','--max-time','12','-w','\n%{http_code}',base+'/api/public/review-channel'],capture_output=True,text=True,check=True)
+          body,code=result.stdout.rsplit('\n',1)
+          if code=='200':
+              posts=json.loads(body)['posts']
+              assert posts and all(post['id']>0 for post in posts)
+              print(f"Channel preview verified: {len(posts)} public posts; newest {posts[0]['id']}.")
+          else:
+              assert code=='503' and json.loads(body)=={'posts':[]}
+              assert json.loads((root/'assets/donat/catalog.json').read_bytes())['reviews']
+              print('Telegram preview temporarily unavailable; verified saved channel post.')
+          assert subprocess.check_output(['curl','-sS','-o','/dev/null','-w','%{http_code}','-X','POST',base+'/api/public/review-channel']).strip()==b'405'
           PY
       - name: Verify Russian and Uzbek replies on the deployed AI binding
         working-directory: release
