@@ -587,6 +587,172 @@ index 2ed7b5a..bd4e3e3 100644
 -  <script src="app.js?v=20261120-v9"></script>
 +  <script src="app.js?v=catalog11-chat13"></script>
  </body></html>
+diff --git a/src/catalog.mjs b/src/catalog.mjs
+index a48ce89..04e594d 100644
+--- a/src/catalog.mjs
++++ b/src/catalog.mjs
+@@ -75,7 +75,9 @@ export function productTitle(id) {
+   return products.get(id)?.title || id;
+ }
+ 
+-function quantityPrice(options, quantity) {
++export function quantityPrice(item, quantity) {
++  integer(quantity, item.min, item.max);
++  const options = item.options;
+   const upperIndex = options.findIndex(([size]) => quantity <= Number(size));
+   const [upper, , price] = options[upperIndex];
+   if (quantity === Number(upper)) return price;
+@@ -117,7 +119,7 @@ export function normalizeDonat(data, existing) {
+     amount = existing.amount;
+   } else if (isQuantity) {
+     label = formatAmount(size) + " " + item.unit;
+-    amount = quantityPrice(item.options, size);
++    amount = quantityPrice(item, size);
+   } else {
+     const option = item.options.find(([code]) => code === selected);
+     if (!option) throw new RequestError("invalid_option");
+diff --git a/src/chat-prices.mjs b/src/chat-prices.mjs
+new file mode 100644
+index 0000000..cebecb9
+--- /dev/null
++++ b/src/chat-prices.mjs
+@@ -0,0 +1,136 @@
++import { catalog, formatAmount, quantityPrice, normalizeBoost, RANKS } from './catalog.mjs';
++
++const products = new Map(catalog.items.map(item => [item.id, item]));
++const aliases = [
++  ['gold_pass', /(?:gold|голд)\s*(?:pass|пасс?)|(?:\+\d+\s*(?:уров|level|lvl))/u],
++  ['spin_coins', /(?<![\p{L}])(?:spin\s*coins?|спин\s*(?:коин|койн)\p{L}*|spin|спин)(?![\p{L}])/u],
++  ['brawl_stars', /brawl|бравл|брол|(?:pro|про)\s*(?:pass|пасс?)|\bgems?\b|гем(?:ы|ов|а)?/u],
++  ['telegram_premium', /premium|премиум|премка|премку/u],
++  ['telegram_stars', /\bstars?\b|старс|зв[её]зд|юлдуз|yulduz/u],
++  ['pubg_mobile', /pubg|pubji|п[ау]бг|\buc\b|юси|учка/iu],
++  ['mobile_legends', /mobile\s*legends?|мобайл\s*легенд|\bmlbb\b|diamond|даймонд|алмаз|twilight/u],
++  ['roblox', /roblox|robloks|robux|robuks|роблокс|роб[ау]кс/u],
++  ['gold', /gold|голд(?:ой|[ауы])?/u]
++];
++const asksPrice = /nech[ai]?\s*(?:pul|p[u]?l)|qancha|qanchaga|narx|narh|n[eai]chidan|nechaga|стоит|стоят|стоимост|цен[ауы]|ценник|прайс|п[оа]ч[её]м|сколько|skolko|қанча|канча|неч[аи]?\s*пул|нарх|нарҳ|price/iu;
++const market = /bozor|boz[o]?r|rinok|рын(?:ок|к)|рин(?:ок|к)|бозор|скин|skin/u;
++const byID = /(?<![\p{L}\p{N}])(?:id|айди|ид)(?![\p{L}\p{N}])/u;
++const gameTitle = /(?:standoff|standof|stendoff|ст[эеа]ндофф?|с[оo]|so)\s*2/gu;
++const amountPattern = /(?<![\p{L}\d])(\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:[.,](\d+))?\s*([kк](?![\p{L}]))?/u;
++const money = (amount, ru) => formatAmount(amount) + (ru ? ' сум' : ' so‘m');
++const identify = q => aliases.find(([, pattern]) => pattern.test(q))?.[0];
++
++function goldQuote(q, amount, ru) {
++  const direct = products.get('gold_id'), viaMarket = products.get('gold_rinok');
++  const size = amount ?? viaMarket.min;
++  const wantID = byID.test(q), wantMarket = market.test(q);
++  const parts = [];
++  if ((!wantID || wantMarket) && Number.isSafeInteger(size) && size >= viaMarket.min && size <= viaMarket.max)
++    parts.push((ru ? 'через рынок ' : 'bozor orqali ') + money(quantityPrice(viaMarket, size), ru));
++  const pack = direct.options.find(([code]) => Number(code) === size);
++  if ((!wantMarket || wantID) && pack)
++    parts.push((ru ? 'по ID ' : 'ID orqali ') + money(pack[2], ru));
++  if (parts.length) return formatAmount(size) + ' Gold — ' + parts.join(', ') + '.';
++  if (wantID) return (ru ? 'Пакеты Gold по ID: ' : 'ID orqali Gold paketlari: ') +
++    direct.options.map(([code]) => formatAmount(code)).join(', ') + '.';
++  return (ru ? 'Через рынок можно заказать ' : 'Bozor orqali: ') +
++    formatAmount(viaMarket.min) + '–' + formatAmount(viaMarket.max) + ' Gold.';
++}
++
++function optionLabel(item, option, ru) {
++  if (item.id !== 'telegram_premium') return option[1];
++  const months = Number.parseInt(option[0], 10);
++  const gift = /kirishsiz/.test(option[1]);
++  return ru ? months + ' мес. ' + (gift ? 'без входа' : 'со входом') :
++    months + ' oy ' + (gift ? 'kirishsiz' : 'akkauntga kirib');
++}
++
++function namedOptions(item, q, amount) {
++  const options = item.options;
++  if (item.id === 'gold_pass') {
++    let code = 'base';
++    if (amount != null) {
++      const levelOnly = /lvl|level|уров|daraja|лвл/u.test(q);
++      code = amount === 10 && /(?:gold|голд)\s*(?:pass|пасс?)/u.test(q) ? 'plus10' : levelOnly ? 'lvl'+amount : amount === 10 ? 'plus10' : '';
++    }
++    return options.filter(o => o[0] === code);
++  }
++  if (item.id === 'brawl_stars' && /pass|пасс?/u.test(q)) {
++    const code = /plus|плюс|\+/.test(q) ? 'passplus' : /pro|про/.test(q) ? 'propass' : 'pass';
++    return options.filter(o => o[0] === code);
++  }
++  if (item.id === 'mobile_legends' && /weekly|twilight/.test(q))
++    return options.filter(o => q.includes(o[0]) && ['weekly','twilight'].includes(o[0]));
++  if (item.id === 'telegram_premium') {
++    const gift = /kirishsiz|kirmasdan|без входа|киришсиз|gift|global/u.test(q);
++    const login = /со входом|с входом|kirib|кириб/u.test(q);
++    return options.filter(o => (amount == null || Number.parseInt(o[0], 10) === amount) &&
++      (!gift || o[1].includes('kirishsiz')) && (!login || !o[1].includes('kirishsiz')));
++  }
++  if (amount == null) return [];
++  return options.filter(o => o[0] === String(amount) || o[0] === 'double'+amount);
++}
++
++const rankWords = [/kalibr|калибр/,/bronz|бронз/,/silver|сильвер/,/gold|голд/,/phoenix|fenix|феникс/,/ranger|рейндж/,/champion|чемпион/,/master|мастер/,/elit|элит/,/legend|легенд/];
++function boostQuote(q, ru) {
++  const ranked = rankWords.map((pattern, index) => ({ index, at:q.search(pattern) })).filter(r=>r.at>=0).sort((a,b)=>a.at-b.at);
++  const mode = /du[eэ]l|дуэл/.test(q) ? 'duel' : /сорев|competitive|raqobat/.test(q) ? 'comp' : /wing|напар|напы|sherik/.test(q) ? 'wing' : null;
++  if (ranked.length !== 2 || ranked[0].index >= ranked[1].index || !mode)
++    return ru ? 'С какого ранга до какого нужен буст и в каком режиме?' : 'Qaysi rankdan qaysi rankgacha va qaysi rejimda boost kerak?';
++  const [from, to] = ranked.map(r => r.index);
++  const quote = normalizeBoost({ fromIndex:from, toIndex:to, mode, gameId:'chat' });
++  return RANKS[from] + ' → ' + RANKS[to] + ' — ' + money(quote.amount, ru) + '.';
++}
++
++export function shopQuote(question, lang, history = []) {
++  const clean = value => value.normalize('NFKC').toLowerCase().replace(gameTitle, ' ').trim();
++  let q = clean(question);
++  const ru = lang === 'ru';
++  if (/(?:унци|грамм|проб[аыу]|слиток|бирж|xau|gramm|quyma|oltin narx)/u.test(q)) return null;
++  const priceIntent = asksPrice.test(q);
++  if (/boost|буст/.test(q) && priceIntent) return boostQuote(q, ru);
++  let id = identify(q);
++  let isFollowup = false;
++  if (!id && history.length) {
++    const short = /^(?:(?:а если|а по|а|unda|по)\s+)?(?:[\d \u00a0]+[kк]?|(?:id|айди|bozor|rinok|рынок|рынку)(?:\s+orqali)?)(?:\s*(?:-?chi|чи|qancha|nechpul))?[?!.]*$/u.test(q);
++    const previous = history.findLast(x => x.role === 'user');
++    const topic = history.findLast(x => x.role === 'user' && identify(clean(x.content)));
++    if (short && previous) {
++      const last = clean(previous.content);
++      id = topic && identify(clean(topic.content));
++      if (id && history.at(-1)?.role === 'assistant' && /so‘m|сум|paket|пакет|Gold\./u.test(history.at(-1).content)) {
++        isFollowup = true;
++        if (!amountPattern.test(q)) q += ' ' + (last.match(amountPattern)?.[0] || '');
++        if (id === 'gold' && !byID.test(q) && !market.test(q)) q += byID.test(last) ? ' id' : market.test(last) ? ' bozor' : '';
++      } else id = null;
++    }
++  }
++  if (!id && /^(?:(?:у вас |у тебя |sizda )?(?:прайс|цены|narxlar|narxlari|прайс лист)|товары сколько стоят)[?!. ]*$/u.test(q))
++    return ru ? 'Какой товар интересует и в каком количестве?' : 'Qaysi mahsulotdan qancha kerak?';
++  if (!id) return null;
++  if (/продать|продаю|сдать|sotmoqchi|sotaman|sotib olasiz/u.test(q))
++    return ru ? 'Цену выкупа уточни у @khblyv.' : 'Sotish narxini @khblyv dan aniqlashtiring.';
++  if (id === 'telegram_premium') q = q.replace(/(?:на год|на один год|bir yil|1 yil|бир йил)/u, '12 oy');
++  const match = q.match(amountPattern);
++  const amount = match ? Number(match[1].replace(/\s/g,'') + (match[2] ? '.'+match[2] : '')) * (match[3] ? 1000 : 1) : null;
++  const bare = q.replace(aliases.find(([key])=>key===id)[1], '').replace(amountPattern,'')
++    .replace(/(?:\s|[!?.,+]|по |orqali|через |рынок|rinok|bozor|id|oy|месяц[аеов]*)+/gu,'') === '';
++  if (!isFollowup && !priceIntent && !bare) return null;
++  if (/(?:за|на)\s*\d[\d\s.,]*\s*(?:сум|uzs)|\d[\d\s.,]*\s*(?:so['’‘ʻ]?m|с[ўу]м|uzs)(?:ga|га)?/iu.test(q))
++    return ru ? 'Напиши количество товара, и я назову цену в сумах.' : 'Mahsulot miqdorini yozing, narxini so‘mda aytaman.';
++  if (/(?:\d\s*(?:[-–—]|yoki|или)\s*\d)|(?:^|\s)-\d/u.test(q))
++    return ru ? 'Для какого количества показать цену?' : 'Qaysi miqdor uchun narxni ko‘rsatay?';
++  if (id === 'gold') return goldQuote(q, amount, ru);
++  const item = products.get(id);
++  if (item.kind === 'quantity') {
++    const size = amount ?? item.min;
++    if (!Number.isSafeInteger(size) || size < item.min || size > item.max)
++      return item.title + ' — ' + formatAmount(item.min) + '–' + formatAmount(item.max) + ' ' + item.unit + '.';
++    return formatAmount(size) + ' ' + item.unit + ' — ' + money(quantityPrice(item, size), ru) + '.';
++  }
++  const relevant = namedOptions(item, q, amount);
++  const shown = relevant.length ? relevant : amount == null ? item.options.slice(0,3) : [];
++  if (!shown.length) return item.title + (ru ? ' — такого варианта нет. В каталоге: ' : ' — bunday variant yo‘q. Katalogda: ') +
++    item.options.slice(0,3).map(o => optionLabel(item,o,ru) + ' — ' + money(o[2],ru)).join(', ') + '.';
++  return shown.slice(0,5).map(o => optionLabel(item,o,ru) + ' — ' + money(o[2],ru)).join('\n');
++}
 diff --git a/src/chat-snow.mjs b/src/chat-snow.mjs
 new file mode 100644
 index 0000000..f65288e
@@ -695,12 +861,13 @@ index 0000000..f65288e
 +}
 diff --git a/src/group-ai.mjs b/src/group-ai.mjs
 new file mode 100644
-index 0000000..3b10001
+index 0000000..2c1604b
 --- /dev/null
 +++ b/src/group-ai.mjs
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,209 @@
 +import { telegram, botToken } from './telegram.mjs';
 +
++import { shopQuote } from './chat-prices.mjs';
 +import {snowRequest, snowAnswer, weatherCredit} from './chat-snow.mjs';
 +
 +const mainModel = '@cf/openai/gpt-oss-120b';
@@ -795,7 +962,7 @@ index 0000000..3b10001
 +}
 +
 +function messagesFor(question,history,lang) {
-+  const policy='You are Arslan, a helpful participant in the ARSLAN CHAT Telegram group. Answer the actual question directly, naturally and accurately. Default to ONE direct sentence, at most two short sentences (aim for 12–30 words). No intro, filler, unsolicited background, region-by-region lists or follow-up offers. If the user explicitly asks for details, provide them. If a needed fact is missing, ask only one targeted question. Current date in Asia/Tashkent: '+calendar.format(new Date())+'. Never present a training year as the current year. Distinguish historical questions from current ones. For live facts (news, exchange rates, game updates), use only verified fresh data provided in this request. Otherwise say briefly you cannot confirm the current value; for a current UZS rate point to cbu.uz. Never guess dates, rates or personal ages from the current year. Russian input gets natural Russian. Uzbek input (Latin, Cyrillic or informal Uzbek) gets natural Uzbek in Latin script unless a different script is requested. Follow explicit language requests. Uzbek is the default for ambiguous input. For a greeting greet naturally. For a follow-up use only the conversation supplied. Do not invent prices, game IDs, order status, access, or completed actions. If the user asks, the shop is @arslansavdo and the admin is @khblyv. Do not advertise in unrelated answers.';
++  const policy='You are Arslan, a helpful participant in the ARSLAN CHAT Telegram group. Answer the actual question directly, naturally and accurately. Default to ONE direct sentence, at most two short sentences (aim for 12–30 words). No intro, filler, unsolicited background, region-by-region lists or follow-up offers. If the user explicitly asks for details, provide them. If a needed fact is missing, ask only one targeted question. Current date in Asia/Tashkent: '+calendar.format(new Date())+'. Never present a training year as the current year. Distinguish historical questions from current ones. For live facts (news, exchange rates, game updates), use only verified fresh data provided in this request. Otherwise say briefly you cannot confirm the current value; refer to cbu.uz only for an actual fiat exchange-rate question. In this chat Gold usually means Standoff 2 game currency. For shop offers use the Mini App catalog; if the requested item or variant is unclear, ask which one. Never guess dates, rates or personal ages from the current year. Russian input gets natural Russian. Uzbek input (Latin, Cyrillic or informal Uzbek) gets natural Uzbek in Latin script unless a different script is requested. Follow explicit language requests. Uzbek is the default for ambiguous input. For a greeting greet naturally. For a follow-up use only the conversation supplied. Do not invent prices, game IDs, order status, access, or completed actions. If the user asks, the shop is @arslansavdo and the admin is @khblyv. Do not advertise in unrelated answers.';
 +  return [{role:'system',content:policy+' Likely answer language: '+(lang==='ru'?'Russian.':'Uzbek.')},
 +    ...history,{role:'user',content:question}];
 +}
@@ -836,7 +1003,7 @@ index 0000000..3b10001
 +    chat,reply.message_id,author) : null;
 +  const history=prior?.history ? JSON.parse(prior.history) : reply?.text ? [{role:'assistant',content:reply.text.slice(0,900)}] : [];
 +  let lang=language(question,prior?.lang);
-+  const quick=dateAnswer(question,lang,new Date()) ?? basicAnswer(question,lang);
++  const quick=shopQuote(question,lang,prior ? history : []) ?? dateAnswer(question,lang,new Date()) ?? basicAnswer(question,lang);
 +  const snow=quick===null ? snowRequest(question,history) : null;
 +  if(snow?.followup && prior?.lang) lang=prior.lang;
 +  const owner=crypto.randomUUID();
@@ -879,7 +1046,7 @@ index 0000000..3b10001
 +
 +// Verify the deployed AI binding once per chat release using public test questions only.
 +// Health requests only read these results and cannot trigger inference.
-+export const aiRevision='concise-16';
++export const aiRevision='shop-17';
 +export async function verifyGroupModels(env,store) {
 +  if (!env.AI || env.TELEGRAM_TEST_ENV!=='0') return;
 +  const claim=await store.first(`INSERT INTO group_ai_checks(revision,attempts,stamp) VALUES(?,1,unixepoch())
@@ -909,10 +1076,10 @@ index 0000000..3b10001
 +}
 diff --git a/src/group-chat.mjs b/src/group-chat.mjs
 new file mode 100644
-index 0000000..5b7ff37
+index 0000000..a24cf9a
 --- /dev/null
 +++ b/src/group-chat.mjs
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,184 @@
 +import { telegram, botToken } from './telegram.mjs';
 +import { welcomeMembers, deleteDueWelcomes, importWelcome } from './group-welcome.mjs';
 +import { answerGroupQuestion, verifyGroupModels, aiRevision } from './group-ai.mjs';
@@ -1072,11 +1239,13 @@ index 0000000..5b7ff37
 +          store.stmt('INSERT INTO group_extras(chat,ai) VALUES(?,1) ON CONFLICT(chat) DO UPDATE SET ai=1',chat)
 +        ]);
 +        break;
-+      case 'salom_namuna':
-+        if (!await importWelcome(store,chat,m.reply_to_message)) {
-+          await telegram(env,'sendMessage',{chat_id:chat,text:'Rasm va tagmatnli asl xabarga javoban /salom_namuna yuboring. Tagmatnda @name bir marta bo‘lsin (900 belgigacha).'}); return;
-+        }
-+        break;
++      case 'salom_namuna': {
++        const text = await importWelcome(env, store, config, m);
++        await telegram(env, 'sendMessage', { chat_id:chat, text,
++          reply_parameters:{ message_id:m.message_id, allow_sending_without_reply:true },
++          ...(m.message_thread_id ? { message_thread_id:m.message_thread_id } : {}) });
++        return;
++      }
 +      case 'salom': {
 +        const value=m.text.slice(command[0].length).trim();
 +        if (!value || value.length>500) {
@@ -1097,10 +1266,10 @@ index 0000000..5b7ff37
 +}
 diff --git a/src/group-welcome.mjs b/src/group-welcome.mjs
 new file mode 100644
-index 0000000..e7abf50
+index 0000000..9f6b0ac
 --- /dev/null
 +++ b/src/group-welcome.mjs
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,134 @@
 +import { telegram } from './telegram.mjs';
 +
 +const banner = '/assets/donat/catalog/chat-welcome.jpg?v=hd15';
@@ -1141,20 +1310,44 @@ index 0000000..e7abf50
 +  return { caption: template.caption.slice(0,start) + name + template.caption.slice(end), caption_entities: entities };
 +}
 +
-+export async function importWelcome(store, chat, original) {
++export async function importWelcome(env, store, config, message) {
++  const original = message.reply_to_message;
++  const chat = message.chat.id;
 +  const text = original?.caption;
 +  if (!original?.photo?.length || typeof text !== 'string' || text.split('@name').length !== 2 ||
-+      text.length > 900) return false;
++      text.length > 900) return 'Rasm va tagmatnli asl xabarga javoban /salom_namuna yuboring. Tagmatnda @name bir marta bo‘lsin (900 belgigacha).';
 +  const image = original.photo.at(-1);
 +  const template = { photo:image.file_id, width:image.width, version:2, caption:text, entities:original.caption_entities || [] };
++  const selected = template.entities.filter(e => e.type === 'custom_emoji');
++  if (selected.length) {
++    let preview;
++    try {
++      preview = await sendWelcome(env, config, { template: JSON.stringify(template) }, message.chat,
++        message.from, message.message_thread_id, false);
++    } catch (error) {
++      if (error.telegramCode !== 400) throw error;
++      return 'Namuna saqlanmadi. Telegram namunani yuborishni rad etdi. Bot egasida Premium yoki botda Fragment orqali olingan qo‘shimcha username borligini tekshiring.';
++    }
++    await store.stmt('INSERT OR IGNORE INTO group_welcomes(chat,author,joined,mid,due) VALUES(?, ?, unixepoch(), ?, unixepoch()+300)',
++      chat, -preview.message_id, preview.message_id).run();
++    const ids = entities => entities.filter(e => e.type === 'custom_emoji').map(e => e.custom_emoji_id).sort();
++    if (JSON.stringify(ids(preview.caption_entities || [])) !== JSON.stringify(ids(selected))) {
++      return 'Namuna saqlanmadi. Telegram sinov xabaridagi Premium emojilarni to‘liq qaytarmadi. Bot egasining Premium obunasini yoki botning Fragment username’ini tekshiring.';
++    }
++  } else {
++    const old = await store.first('SELECT template FROM group_extras WHERE chat=?', chat);
++    if (old?.template && JSON.parse(old.template).entities.some(e => e.type === 'custom_emoji'))
++      return 'Telegram bu namunada 0 ta Premium emoji uzatdi. Avvalgi namuna saqlandi. Asl postni Premium akkauntdan guruhga yuboring.';
++  }
 +  await store.db.batch([
 +    store.stmt('INSERT INTO group_extras(chat,template) VALUES(?,?) ON CONFLICT(chat) DO UPDATE SET template=excluded.template', chat, JSON.stringify(template)),
 +    store.stmt('INSERT INTO group_preferences(chat,welcome,greeting) VALUES(?,1,NULL) ON CONFLICT(chat) DO UPDATE SET welcome=1,greeting=NULL',chat)
 +  ]);
-+  return true;
++  return selected.length ? 'Namuna saqlandi. Telegram tasdiqlagan Premium emojilar: ' + selected.length + ' ta.'
++    : 'Namuna saqlandi. Premium emoji: 0 ta. Animatsiya uchun asl postni Premium akkauntdan guruhga yuboring va unga /salom_namuna deb javob bering.';
 +}
 +
-+async function sendWelcome(env, config, prefs, chat, user, thread) {
++async function sendWelcome(env, config, prefs, chat, user, thread, allowFallback = true) {
 +  const dest = { chat_id: chat.id, ...(thread ? { message_thread_id: thread } : {}) };
 +  if (prefs.greeting) {
 +    const text = prefs.greeting.replace(/@name|\{ism\}|\{guruh\}/g, key =>
@@ -1167,7 +1360,7 @@ index 0000000..e7abf50
 +  const body = { ...dest, photo: useHD ? new URL(banner, config.app).href : template.photo, ...personalized(template,user) };
 +  try { return await telegram(env, 'sendPhoto', body); }
 +  catch (error) {
-+    if (error.telegramCode !== 400 || !body.caption_entities.some(e => e.type === 'custom_emoji')) throw error;
++    if (!allowFallback || error.telegramCode !== 400 || !body.caption_entities.some(e => e.type === 'custom_emoji')) throw error;
 +    return telegram(env, 'sendPhoto', { ...body, caption_entities: body.caption_entities.filter(e => e.type !== 'custom_emoji') });
 +  }
 +}
@@ -1564,7 +1757,7 @@ index e53ec7d..b464d68 100644
      all:selector=>selector==='[data-history]'?tabs:selector==='#filters [data-history-filter]'?filters:[],
      glyph:()=>'<svg class="glyph"></svg>',
 diff --git a/tests/p2p.test.mjs b/tests/p2p.test.mjs
-index d012190..b5c10b4 100644
+index d012190..97a5fc3 100644
 --- a/tests/p2p.test.mjs
 +++ b/tests/p2p.test.mjs
 @@ -25,7 +25,7 @@ function mockD1(beforeExactAmounts, beforeOrderGuard) {
@@ -1639,20 +1832,21 @@ index d012190..b5c10b4 100644
    assert.equal(greeting.body.parse_mode,'HTML');
    assert.match(greeting.body.photo,/\/assets\/start-welcome-v6\.jpg$/);
    const buttons=greeting.body.reply_markup.inline_keyboard.flat();
-@@ -2155,3 +2157,181 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
+@@ -2155,3 +2157,204 @@ test('V9 legacy V8 invoice without lease_expires_at retains original deadline',a
    const current=(await sys.api(1,`invoice/${placed.data.invoiceId}/status`,null,'GET')).data;
    assert.equal(current.expiresAt-current.createdAt,600);
  });
 +
 +test('Group rules, exact welcome import, per-person expiry and AI work through Telegram', async t => {
 +  const calls=[], prompts=[];
-+  let resultId=200, seq=0;
++  let resultId=200, seq=0, emojiMode='normal';
 +  t.mock.method(globalThis,'fetch',async(url,opts)=>{
 +    const method=url.split('/').at(-1), body=JSON.parse(opts.body);
 +    calls.push({method,body});
 +    const isAdmin=[40,900000].includes(body.user_id);
 +    const result=method==='getChatMember'?{status:isAdmin?'administrator':'member',can_restrict_members:isAdmin,can_delete_messages:isAdmin}
-+      : {message_id:++resultId};
++      : {message_id:++resultId, ...(method==='sendPhoto' && emojiMode==='normal' ? {caption_entities:body.caption_entities} : {})};
++    if (method==='sendPhoto' && emojiMode==='reject') return Response.json({ok:false,error_code:400},{status:400});
 +    return Response.json({ok:true,result});
 +  });
 +  const sys=app({AI:{run:async(model,params)=>{prompts.push(params.messages);return {response:'Salom!'};}}});
@@ -1691,12 +1885,25 @@ index d012190..b5c10b4 100644
 +    {type:'custom_emoji',offset:0,length:2,custom_emoji_id:'123'},
 +    {type:'mention',offset:9,length:5},{type:'custom_emoji',offset:16,length:1,custom_emoji_id:'456'}]};
 +  await message(40,'/salom_namuna',{reply_to_message:original});
++  assert.match(sent('sendMessage').at(-1).text,/tasdiqlagan Premium emojilar: 2 ta/);
++  const savedTemplate=()=>sys.db.prepare('SELECT template FROM group_extras WHERE chat=?').get(chat.id).template;
++  const originalSaved=savedTemplate();
++  await message(40,'/salom_namuna',{reply_to_message:{...original,caption_entities:[]}});
++  assert.match(sent('sendMessage').at(-1).text,/0 ta Premium emoji/);
++  assert.equal(savedTemplate(),originalSaved);
++  for(const mode of ['reject','strip']){
++    emojiMode=mode;
++    await message(40,'/salom_namuna',{reply_to_message:{...original,photo:[{file_id:'different_photo'}]}});
++    assert.match(sent('sendMessage').at(-1).text,/Namuna saqlanmadi/);
++    assert.equal(savedTemplate(),originalSaved);
++  }
++  emojiMode='normal';
 +  await message(44,undefined,{new_chat_members:[{id:44,username:'ancha_uzun',first_name:'A'}]});
 +  const custom=sent('sendPhoto').at(-1);
 +  assert.equal(custom.photo,'original_photo');assert.equal(custom.caption,'💬 Salom @ancha_uzun! ⚡');
 +  assert.equal(custom.caption_entities.find(e=>e.custom_emoji_id==='456').offset,custom.caption.indexOf('⚡'));
 +  const due=sys.db.prepare('SELECT mid,due FROM group_welcomes').all();
-+  assert.equal(due.length,3); assert.ok(due.every(row=>Math.abs(row.due-date-300)<5));
++  assert.equal(due.length,5); assert.ok(due.every(row=>Math.abs(row.due-date-300)<5));
 +  await sys.scheduled();await sys.drain();assert.equal(sent('deleteMessage').length,2);
 +  sys.db.prepare('UPDATE group_welcomes SET due=unixepoch()-1').run();
 +  await sys.scheduled();await sys.drain();await sys.scheduled();await sys.drain();
@@ -1752,6 +1959,15 @@ index d012190..b5c10b4 100644
 +  await sys.webhook({callback_query:{id:'no-flood',from:{id:40},data:'af:off',message:{chat,message_id:1}}});
 +  const last=()=>outbound.at(-1);
 +  await message('/ai 2+2?');assert.equal(last(),'4');assert.equal(modelCalls.length,0);
++  const replyToBot=()=>({reply_to_message:{message_id:messageId,from:{id:900000,is_bot:true},text:last()}});
++  await message('100 gold nechpul',replyToBot());
++  assert.equal(last(),'100 Gold — bozor orqali 11 990 so‘m, ID orqali 24 990 so‘m.');
++  await message('ID orqali?',replyToBot());assert.equal(last(),'100 Gold — ID orqali 24 990 so‘m.');
++  await message('/ai Сколько стоит 250 голды через рынок?');assert.equal(last(),'250 Gold — через рынок 29 990 сум.');
++  await message('/ai Gold Pass nechpul');assert.equal(last(),'Gold Pass — 108 990 so‘m');
++  await message('/ai Сколько стоит Premium на 12 месяцев?');assert.match(last(),/без входа — 419 990 сум/);assert.match(last(),/со входом — 299 990 сум/);
++  await message('/ai 325 UC qancha');assert.match(last(),/64 990 so‘m/);
++  assert.equal(modelCalls.length,0);
 +  await message('/ai Сколько будет (2+3)×4?');assert.equal(last(),'20');
 +  await message('/ai русча'); 
 +  await message('/ai привет!');assert.match(last(),/Привет/);
