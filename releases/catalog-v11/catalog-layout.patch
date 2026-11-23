@@ -1,0 +1,271 @@
+diff --git a/public/assets/donat/catalog.json b/public/assets/donat/catalog.json
+index 1a3a343..e25ac34 100644
+--- a/public/assets/donat/catalog.json
++++ b/public/assets/donat/catalog.json
+@@ -1,5 +1,6 @@
+ {
+   "version": 3,
++  "reviews": [],
+   "items": [
+     {"id":"gold_rinok","title":"Gold (Rinok)","subtitle":"Skin orqali Gold","group":"core","image":"assets/donat/gold.webp","kind":"quantity","min":100,"max":10000,"unit":"Gold","step":100,"input":"optional","badge":"Eng ommabop","options":[["100","100 Gold",11990],["200","200 Gold",23990],["500","500 Gold",59990],["1000","1 000 Gold",119990],["3000","3 000 Gold",359990],["5000","5 000 Gold",599990],["10000","10 000 Gold",1149990]]},
+     {"id":"gold_id","title":"Gold (ID)","subtitle":"ID orqali Gold","group":"core","image":"assets/donat/id.webp","kind":"options","max_packs":99,"unit":"Gold","input":"game_id","badge":"Tez va qulay","options":[["100","100 Gold",24990],["200","200 Gold",47990],["300","300 Gold",69990],["500","500 Gold",95990],["1000","1 000 Gold",159990],["3000","3 000 Gold",369990]]},
+diff --git a/public/assets/donat/shop.css b/public/assets/donat/shop.css
+index 15ffae1..c71e8b7 100644
+--- a/public/assets/donat/shop.css
++++ b/public/assets/donat/shop.css
+@@ -896,23 +896,25 @@ body:has(#donat.active)::before {
+ .shop-banner { aspect-ratio: 5.38; border: 1px solid #55c4ff; border-radius: 13px; box-shadow: 0 0 6px #0088c746; margin-bottom: 7px; }
+ .category-tabs { gap: 5px; margin-bottom: 8px; }
+ .shop-page .category-tabs button { min-height: 33px; }
+-.product-grid { gap: 6px; }
++.product-grid { gap: 8px; }
++@media (max-width: 350px) {
++  .shop-page .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
++}
+ .shop-page .product-card {
+-  overflow: hidden; padding: 0 0 5px; border-radius: 12px; min-height: 0;
++  overflow: hidden; padding: 0 0 7px; border-radius: 12px; min-height: 0;
+   border-color: var(--edge,#53bcff); background: linear-gradient(150deg,var(--aura,#163a56),var(--card-base,#082133));
+   box-shadow: inset 0 0 4px var(--rim,#1685c255); align-items: stretch; justify-content: flex-start;
+ }
+ .shop-page .product-card.pass { --edge:#8ec2e1; --aura:#213c49; --card-base:#112634; }
+-.shop-page .product-card .card-art { width: 100%; height: auto; aspect-ratio: 2.95; object-fit: cover; border-radius: 0; }
+-.shop-page .product-card:is(.gold,.id) .card-art { aspect-ratio: 2.28; object-fit: cover; }
+-.shop-page .product-card.pass .card-art { aspect-ratio: 2.76; object-fit: cover; }
+-.shop-page .product-card .card-name { margin: 3px 2px 0; font-size: clamp(10px,2.7vw,14px); font-weight: 730; line-height: 1.12; }
+-.shop-page .product-card:is(.gold,.id) .card-name { margin-block: auto; padding-top: 5px; }
+-.shop-page .product-card .card-desc { margin: 2px 1px 0; color: #e0ebf6; font-size: clamp(9px,2.45vw,12px); line-height: 1.12; }
++.shop-page .product-card .card-art { width: 100%; height: auto; aspect-ratio: 1.82; object-fit: cover; border-radius: 0; }
++.shop-page .product-card:is(.gold,.coins) .card-art { aspect-ratio: 2; object-position: 36% center; }
++.shop-page .product-card .card-name { margin: 6px 4px 0; font-size: clamp(12px,3.3vw,15px); font-weight: 730; line-height: 1.15; }
++.shop-page .product-card .card-desc { margin: 2px 4px 0; color: #e0ebf6; font-size: clamp(10px,2.75vw,12px); line-height: 1.15; }
+ .section-title { margin: 9px 2px 7px; }
+ .shop-page .section-title .ui-icon, .shop-page .show-all { color: #26dded; }
+ .game-grid { gap: 5px; }
+-.game-art { aspect-ratio: 1.96; object-fit: cover; border: 1px solid #82b5d6; border-radius: 9px; }
++.game-art { aspect-ratio: 1.85; object-fit: cover; border: 1px solid #82b5d6; border-radius: 9px; }
++.game-card:is([data-product="pubg_mobile"],[data-product="mobile_legends"]) .game-art { object-position: left center; }
+ .game-name { color: #fff; font-size: clamp(9px,2.55vw,13px); font-weight: 600; }
+ .catalog-order {
+   display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 10px;
+@@ -920,6 +922,16 @@ body:has(#donat.active)::before {
+   color: #f7fbff; background: linear-gradient(110deg,#0a2338,#062033); text-align: left; font-size: clamp(10px,2.8vw,13px);
+ }
+ .catalog-order[hidden] { display: none; }
++.shop-reviews { margin-top: 12px; }
++.shop-reviews h2 { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px; font-size: 15px; }
++.shop-reviews h2 .ui-icon { width: 18px; height: 18px; }
++.review-list { display: grid; grid-auto-flow: column; grid-auto-columns: min(88%, 365px); gap: 8px; overflow-x: auto; scroll-snap-type: x proximity; }
++.review-list:has(> :only-child) { grid-auto-columns: 100%; }
++.review-list figure, .review-empty { border: 1px solid #305a75; border-radius: 12px; background: #0b2336; margin: 0; padding: 10px 12px; }
++.review-list figure { min-width: 0; scroll-snap-align: start; }
++.review-list blockquote { margin: 0; color: #edf7ff; line-height: 1.4; font-size: 14px; overflow-wrap: anywhere; }
++.review-list figcaption { margin-top: 5px; font-size: 12px; color: #a5c2d6; }
++.review-empty { color: #afc8da; font-size: 13px; }
+ .catalog-order .ui-icon { width: 15px; height: 15px; }
+ .catalog-order-status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+ .catalog-order-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #ffc222; }
+diff --git a/public/assets/donat/shop.js b/public/assets/donat/shop.js
+index 9d521a6..874aef5 100644
+--- a/public/assets/donat/shop.js
++++ b/public/assets/donat/shop.js
+@@ -11,6 +11,7 @@ window.initArslanShop = function ({
+       sub: 'O‘yin valyutalari va xizmatlar', search: 'Qidirish…', clear: 'Qidiruvni tozalash',
+       all: 'Hammasi', games: 'O‘yinlar', services: 'Servislar', filters: 'Do‘kon filtrlari',
+       other: 'Boshqa o‘yinlar', showAll: 'Barchasi', noResults: 'Mahsulot topilmadi',
++      reviews: 'Xaridorlar fikrlari', reviewsEmpty: 'Hozircha sharhlar yo‘q.',
+       loading: 'Mahsulotlar yuklanmoqda…', loadError: 'Katalogni yuklab bo‘lmadi', retry: 'Qayta urinish',
+       quantity: 'Nechta Gold kerak?', starsQuantity: 'Nechta Stars kerak?', select: 'Paketni tanlang', game: 'O‘yin ID',
+       addPack: 'Paket qo‘shish', removePack: 'Bitta paketni olib tashlash',
+@@ -51,6 +52,7 @@ window.initArslanShop = function ({
+       sub: 'Игровая валюта и услуги', search: 'Поиск…', clear: 'Очистить поиск',
+       all: 'Все', games: 'Игры', services: 'Услуги', filters: 'Фильтры магазина',
+       other: 'Другие игры', showAll: 'Все игры', noResults: 'Ничего не найдено',
++      reviews: 'Отзывы покупателей', reviewsEmpty: 'Пока нет опубликованных отзывов.',
+       loading: 'Загружаем товары…', loadError: 'Не удалось загрузить каталог', retry: 'Повторить',
+       quantity: 'Сколько нужно Gold?', starsQuantity: 'Сколько нужно Stars?', select: 'Выберите пакет', game: 'Игровой ID',
+       addPack: 'Добавить пакет', removePack: 'Убрать один пакет',
+@@ -118,7 +120,9 @@ window.initArslanShop = function ({
+   const search = document.querySelector('#shop-search');
+   const clear = document.querySelector('#clear-search');
+   const filters = [...document.querySelectorAll('#shop-filters button')];
+-  const state = { items: [], loading: false, failed: false, category: 'all' };
++  const reviewsSection = document.querySelector('#shop-reviews');
++  const reviewContent = document.querySelector('#review-content');
++  const state = { items: [], reviews: [], loading: false, failed: false, category: 'all' };
+ 
+   const t = key => translations[lang()][key];
+   const amount = value => money(value) + ' UZS';
+@@ -126,13 +130,12 @@ window.initArslanShop = function ({
+     ? value.replace(' oy', ' мес.').replace('(kirishsiz)', '(подарок)')
+     : value;
+   const subtitle = item => (lang() === 'ru' && translatedSubtitles[item.id]) || (item.id === 'gold_pass' && lang() === 'uz' ? 'Standoff 2 passi' : item.subtitle);
+-  const cover = item => storefrontArt.has(item.id) ? `assets/donat/catalog/${item.id}.webp?v=catalog11` : item.image;
++  const cover = item => storefrontArt.has(item.id) ? `assets/donat/catalog/${item.id}-hd.webp?v=art12` : item.image;
+   function productCover(item) {
+     const isTelegram = item.id === 'telegram_premium' || item.id === 'telegram_stars';
+     const width = isTelegram ? 1536 : 1024;
+     const height = isTelegram ? (item.id === 'telegram_premium' ? 510 : 514) : 384;
+-    const src = storefrontArt.has(item.id) ? `assets/donat/catalog/${item.id}-hd.webp?v=art12` : item.image;
+-    return `<div class="widget-cover"><img src="${escape(src)}" width="${width}" height="${height}" alt="" decoding="async"></div>`;
++    return `<div class="widget-cover"><img src="${escape(cover(item))}" width="${width}" height="${height}" alt="" decoding="async"></div>`;
+   }
+   const botLink = start => {
+     const link = telegramUrl(config.botUrl);
+@@ -153,7 +156,18 @@ window.initArslanShop = function ({
+       </button>`;
+   }
+ 
++  function reviewCard(review) {
++    const author = review.author ? `<figcaption dir="auto">${escape(review.author)}</figcaption>` : '';
++    return `<figure><blockquote dir="auto">${escape(review.text)}</blockquote>${author}</figure>`;
++  }
++
+   function render() {
++    reviewsSection.hidden = state.loading || state.failed || state.category !== 'all' || Boolean(search.value.trim());
++    if (!reviewsSection.hidden) {
++      reviewContent.innerHTML = state.reviews.length
++        ? `<div class="review-list">${state.reviews.map(reviewCard).join('')}</div>`
++        : `<p class="review-empty">${t('reviewsEmpty')}</p>`;
++    }
+     filters.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.category === state.category)));
+     if (state.loading) {
+       content.innerHTML = `<p class="shop-empty">${t('loading')}</p>`;
+@@ -195,11 +209,12 @@ window.initArslanShop = function ({
+     state.failed = false;
+     render();
+     try {
+-      const response = await fetch('assets/donat/catalog.json?v=catalog11',refresh?{cache:'reload'}:undefined);
++      const response = await fetch('assets/donat/catalog.json?v=catalog11-layout19',refresh?{cache:'reload'}:undefined);
+       if (!response.ok) throw new Error('Catalog unavailable');
+       const data = await response.json();
+       if (!Array.isArray(data.items)) throw new Error('Invalid catalog');
+       state.items = data.items;
++      state.reviews = Array.isArray(data.reviews) ? data.reviews.filter(review => typeof review?.text === 'string' && review.text.trim()) : [];
+     } catch {
+       state.failed = true;
+     } finally {
+diff --git a/public/index.html b/public/index.html
+index bd4e3e3..38fed4e 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -28,7 +28,7 @@
+   </style>
+   <link rel="stylesheet" href="app.css?v=20261120-pro-v2">
+   <link rel="stylesheet" href="assets/p2p.css?v=20261120-v9">
+-  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-chat13">
++  <link rel="stylesheet" href="assets/donat/shop.css?v=catalog11-layout19">
+ </head>
+ <body>
+   <main class="app">
+@@ -134,6 +134,10 @@
+         <span data-ui-icon="receipt" aria-hidden="true"></span><strong></strong>
+         <span class="catalog-order-status"></span><span aria-hidden="true">›</span>
+       </button>
++      <section id="shop-reviews" class="shop-reviews" aria-labelledby="reviews-title" hidden>
++        <h2><span data-ui-icon="book" aria-hidden="true"></span><span id="reviews-title" data-shop-text="reviews">Xaridorlar fikrlari</span></h2>
++        <div id="review-content"></div>
++      </section>
+     </section>
+     <section class="page history-page" id="history">
+       <div class="history-heading">
+@@ -208,7 +212,7 @@
+   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+   <button type="button" id="keyboard-done" class="keyboard-done" data-i18n="keyboardDone" tabindex="-1" hidden>Tayyor</button>
+   <div class="intro" id="intro" aria-hidden="true"><div class="intro-content"><img class="intro-emblem" src="assets/intro-emblem.webp" width="1280" height="1280" alt="" decoding="async" fetchpriority="high"><div class="intro-brand">ARSLAN BOOST</div><div class="intro-game">STANDOFF <span>2</span></div><p class="intro-subtitle" data-i18n="introSubtitle">Rank oshirish xizmati</p></div></div>
+-  <script src="assets/donat/shop.js?v=catalog11-chat13"></script>
++  <script src="assets/donat/shop.js?v=catalog11-layout19"></script>
+   <script src="assets/p2p.js?v=20261120-v9"></script>
+   <script src="app.js?v=catalog11-chat13"></script>
+ </body></html>
+diff --git a/tests/catalog-browser.py b/tests/catalog-browser.py
+index 4e41392..088c243 100644
+--- a/tests/catalog-browser.py
++++ b/tests/catalog-browser.py
+@@ -27,15 +27,20 @@ def check(browser, url, width, language):
+     expect(page.locator("[data-product]")).to_have_count(len(ITEMS))
+     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+     expect(page.locator("#catalog-order")).to_be_hidden()
++    reviews = page.locator("#shop-reviews")
++    expect(reviews.get_by_role("heading")).to_have_text("Отзывы покупателей" if language == "ru" else "Xaridorlar fikrlari")
++    expect(reviews.locator("input, textarea, form, [contenteditable=true]")).to_have_count(0)
+     for item in ITEMS:
+         tile = page.locator(f'button[data-product="{item["id"]}"]')
+-        assert tile.locator("img").evaluate("img => img.complete && img.naturalWidth > 0")
+-        thumbnail = tile.locator("img").get_attribute("src")
++        assert tile.locator("img").evaluate("""async img => {
++            await img.decode();
++            const rect = img.getBoundingClientRect();
++            return img.naturalWidth >= rect.width * 3 && img.naturalHeight >= rect.height * 3;
++        }"""), item["id"]
+         tile.click()
+         hero = page.locator(".widget-cover img")
+         expect(hero).to_be_visible()
+         expect(page.locator("#sheet-title")).to_be_visible()
+-        assert hero.get_attribute("src") != thumbnail
+         assert hero.evaluate("""async img => {
+             await img.decode();
+             const rect = img.getBoundingClientRect();
+@@ -50,6 +55,7 @@ def check(browser, url, width, language):
+         page.locator("#close-sheet").click()
+     title = "ID orqali Gold" if language == "uz" else "Gold по ID"
+     page.locator("#shop-search").fill(title)
++    expect(reviews).to_be_hidden()
+     expect(page.locator("[data-product]")).to_have_count(1)
+     page.locator('[data-product="gold_id"]').click()
+     expect(page.locator("#sheet-title")).to_have_text(title)
+@@ -73,7 +79,9 @@ def check(browser, url, width, language):
+     expect(page.locator("#product-detail")).to_have_value("12345678")
+     page.locator("#close-sheet").click()
+     page.locator("#clear-search").click()
++    expect(reviews).to_be_visible()
+     page.locator('#shop-filters [data-category="games"]').click()
++    expect(reviews).to_be_hidden()
+     expect(page.locator("[data-product]")).to_have_count(4)
+     page.locator('#shop-filters [data-category="services"]').click()
+     expect(page.locator("[data-product]")).to_have_count(6)
+@@ -93,6 +101,11 @@ def check_active_order(browser, url):
+         address = route.request.url
+         if not address.startswith(url):
+             return route.abort()
++        if "/assets/donat/catalog.json" in address:
++            return route.fulfill(json={"items": ITEMS, "reviews": [
++                {"author": "A", "text": "Test <b>one</b>"},
++                {"text": "Test two"},
++            ]})
+         fixtures = {"config": {"arslanBoostApi": True}, "state": {"payments": [payment]},
+                     "donat/state": {"orders": [order]}}
+         if "/api/" in address:
+@@ -104,8 +117,22 @@ def check_active_order(browser, url):
+     expect(row).to_contain_text("To‘lov kutilmoqda")
+     tiles = page.locator(".game-card")
+     expect(tiles).to_have_count(4)
+-    for width, height, columns in [(390, 720, 4), (430, 930, 4), (320, 568, 4)]:
++    reviews = page.locator("#shop-reviews")
++    expect(reviews.locator("blockquote")).to_have_count(2)
++    expect(reviews.locator("blockquote").first).to_have_text("Test <b>one</b>")
++    expect(reviews.locator("blockquote b, input, textarea, form, [contenteditable=true]")).to_have_count(0)
++    for width, height, columns in [(390, 720, 4), (430, 800, 4), (430, 930, 4), (320, 568, 4)]:
+         page.set_viewport_size({"width": width, "height": height})
++        page.evaluate("window.scrollTo(0, 0)")
++        covers = [art.bounding_box() for art in page.locator(".product-card .card-art").all()]
++        assert len(covers) == 6 and len({round(box["x"]) for box in covers}) == (2 if width <= 350 else 3)
++        assert min(box["height"] for box in covers) >= width * 0.142
++        if height in (720, 800):
++            nav_top = page.locator("#bottom-nav").bounding_box()["y"]
++            review_box = reviews.bounding_box()
++            unused = nav_top - review_box["y"] - review_box["height"]
++            assert unused <= 65 and review_box["y"] < nav_top, (width, height, unused, review_box, nav_top)
++            print(f"Catalog at {width}×{height}: cover {covers[0]['width']:.0f}×{covers[0]['height']:.0f}, empty space {max(0, unused):.0f}px")
+         positions = [tile.bounding_box() for tile in tiles.all()]
+         assert len({round(box["x"]) for box in positions}) == columns, (width, positions)
+         last_bottom = max(box["y"] + box["height"] for box in positions)
+@@ -116,6 +143,8 @@ def check_active_order(browser, url):
+         row_box = row.bounding_box()
+         nav = page.locator("#bottom-nav").bounding_box()
+         assert row_box["y"] + row_box["height"] <= nav["y"], (row_box, nav)
++        review_box = reviews.bounding_box()
++        assert row_box["y"] + row_box["height"] < review_box["y"] and review_box["y"] + review_box["height"] <= nav["y"] + 1
+         print(f"Verified {width}×{height}: {columns} game columns, order gap {gap:.1f}px")
+     payment["invoice_checking"] = 1
+     page.locator('#service-switch [data-service="donat"]').click()
