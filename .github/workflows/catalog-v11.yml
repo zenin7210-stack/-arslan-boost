@@ -56,7 +56,7 @@ jobs:
           def digest(b): return hashlib.sha256(b).hexdigest()
           live=digest(subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',
               origin+'/index.html?verify='+os.environ['GITHUB_SHA']]))
-          ready=current=='52fe7213-7465-454d-ab17-aca199674ba7' and live=='6e6de8f8e0a02791d76f3017900a5bdb72f7651b2ddc7479909c11a25422be9b'
+          ready=current=='66a02207-1700-43c9-8700-77d1640b5d77' and live=='0be9c7442dd6dbb1ec0c7def6b2681fdfac124b99dda684cd620bc85b56f7d52'
           same=False
           if not ready and live==digest(open('public/index.html','rb').read()):
               marker='/healthz?welcome=1'
@@ -124,3 +124,4 @@ jobs:
               time.sleep(8)
           else: raise RuntimeError('Live bilingual verification pending or unsuccessful')
           PYTEST
+

@@ -61,4 +61,6 @@ apply((HERE / "welcome-hour.patch").read_bytes())
 apply((HERE / "catalog-layout.patch").read_bytes())
 apply((HERE / "catalog-sections.patch").read_bytes())
 apply((HERE / "compact-reviews.patch").read_bytes())
+apply((HERE / "original-art.patch").read_bytes())
 print("Source, static assets, catalog and production configuration verified.")
+
