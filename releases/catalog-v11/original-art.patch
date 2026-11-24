@@ -29,7 +29,7 @@ diff --git a/public/assets/donat/shop.js b/public/assets/donat/shop.js
 diff --git a/public/assets/donat/shop.css b/public/assets/donat/shop.css
 --- a/public/assets/donat/shop.css
 +++ b/public/assets/donat/shop.css
-@@ -898,19 +898,17 @@
+@@ -898,19 +898,18 @@
  .shop-page .category-tabs button { min-height: 33px; }
 -.product-grid { gap: 6px; }
 -.shop-page .product-card {
@@ -57,6 +57,7 @@ diff --git a/public/assets/donat/shop.css b/public/assets/donat/shop.css
 +.shop-page .product-card.pass { --edge:#8ec2e1; --aura:#213c49; --card-base:#112634; }
 +.shop-page .product-card .card-art { width: 100%; height: auto; aspect-ratio: auto; object-fit: contain; border-radius: 0; }
 +.shop-page .product-card .card-name { margin: 4px 2px 0; font-size: clamp(10.5px,2.85vw,13px); font-weight: 730; line-height: 1.16; }
++.shop-page .product-card[data-product="telegram_premium"] .card-name { padding: 0; min-height: 0; font-size: clamp(10px,2.7vw,12px); white-space: nowrap; }
 +.shop-page .product-card .card-desc { margin: 1px 2px 0; color: #d3e3ef; font-size: clamp(10px,2.6vw,12px); line-height: 1.2; }
 +.section-title { margin: 12px 2px 7px; }
 +.shop-page .section-title .ui-icon, .shop-page .show-all { color: #26dded; }
@@ -98,11 +99,15 @@ diff --git a/tests/catalog-browser.py b/tests/catalog-browser.py
 +                && img.naturalWidth >= img.clientWidth * 2
 +                && Math.abs(img.clientHeight - img.clientWidth * img.naturalHeight / img.naturalWidth) <= 1.5;
          }"""), item["id"]
-@@ -147,3 +150,6 @@
+@@ -147,3 +150,10 @@
          assert all(width * 0.27 <= box["width"] <= width / 3 for box in covers)
 -        assert all(44 <= box["height"] <= width * 0.17 for box in covers)
 +        assert all(27 <= box["height"] <= width * 0.144 for box in covers)
 +        if width >= 360:
 +            name = page.locator('[data-product="telegram_premium"] .card-name')
-+            assert name.evaluate("el => el.offsetHeight <= parseFloat(getComputedStyle(el).lineHeight) + 1")
++            assert name.evaluate("""el => {
++                const range = document.createRange();
++                range.selectNodeContents(el);
++                return range.getClientRects().length === 1 && range.getBoundingClientRect().width <= el.clientWidth + 1;
++            }""")
          assert len({round(tile.bounding_box()["x"]) for tile in tiles.all()}) == 4
