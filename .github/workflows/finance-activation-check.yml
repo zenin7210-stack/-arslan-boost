@@ -1,4 +1,4 @@
-name: Verify private finance channel activation
+name: Verify private finance group activation
 on:
   push:
     branches: [finance-deploy-preflight]
@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Read only verification of finance channel and marketplace health
+      - name: Verify group menu, dashboard, HUMO configuration and marketplace health
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -23,19 +23,27 @@ jobs:
               assert j['success']
               return j['result']
           db=[d for d in req('/d1/database?name=arslan-finance-channel') if d['name']=='arslan-finance-channel'][0]['uuid']
-          required={'channel','card','track_from','humo_peer','dashboard'}
-          for attempt in range(18):
-              r=req('/d1/database/'+db+'/query',{'sql':"SELECT k FROM fin_config WHERE k IN ('channel','card','track_from','humo_peer','dashboard')"})
-              keys={row['k'] for x in r for row in x.get('results',[])}
-              if required<=keys:
-                  print('PASS: private channel bound, verified HUMO peer stored, dashboard published.')
+          # Only the authenticated relay sets these markers after Telegram accepts the menu.
+          # Check agreement within D1 and keep identifiers and financial data out of CI logs.
+          sql = """
+            SELECT EXISTS (
+              SELECT 1 FROM fin_config AS c
+              JOIN fin_config AS m ON m.k='menu_group' AND m.v=c.v
+              JOIN fin_config AS d ON d.k='dashboard' AND CAST(d.v AS INTEGER)>0
+              JOIN fin_config AS p ON p.k='humo_peer' AND CAST(p.v AS INTEGER)>0
+              JOIN fin_config AS k ON k.k='card' AND length(k.v)=4
+              JOIN fin_config AS t ON t.k='track_from' AND length(t.v)>0
+              WHERE c.k='channel'
+            ) AS ready
+          """
+          for attempt in range(30):
+              result=req('/d1/database/'+db+'/query',{'sql':sql})
+              if result[0]['results'][0]['ready']:
                   break
-              if attempt==17:
-                  print('Finance configuration keys present:',len(keys),'of',len(required))
-                  raise SystemExit('Channel activation not yet verified')
+              if attempt==29:
+                  raise SystemExit('Private finance group menu activation not verified')
               time.sleep(5)
-          r=req('/d1/database/'+db+'/query',{'sql':"SELECT COUNT(*) AS n FROM fin_ops WHERE amount<0"})
-          print('Observed debit records:',r[0]['results'][0]['n'])
+          print('PASS: Telegram accepted the scoped menu and published the dashboard in the bound finance group; HUMO configured.')
           h=json.loads(subprocess.check_output(['curl','-fsSL','--max-time','20','https://arslan-boost-bot.zenin7210.workers.dev/healthz']))
           assert h['ok'] and h['paymentsEnabled']
           print('PASS: marketplace healthy and payments enabled.')
