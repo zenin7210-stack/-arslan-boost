@@ -1,0 +1,42 @@
+name: Verify private finance channel activation
+on:
+  push:
+    branches: [finance-deploy-preflight]
+    paths: ['.github/workflows/finance-activation-check.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read only verification of finance channel and marketplace health
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json,os,time,urllib.request,subprocess
+          root='https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c'
+          def req(path,body=None):
+              q=urllib.request.Request(root+path,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'})
+              with urllib.request.urlopen(q,timeout=20) as r:j=json.load(r)
+              assert j['success']
+              return j['result']
+          db=[d for d in req('/d1/database?name=arslan-finance-channel') if d['name']=='arslan-finance-channel'][0]['uuid']
+          required={'channel','card','track_from','humo_peer','dashboard'}
+          for attempt in range(18):
+              r=req('/d1/database/'+db+'/query',{'sql':"SELECT k FROM fin_config WHERE k IN ('channel','card','track_from','humo_peer','dashboard')"})
+              keys={row['k'] for x in r for row in x.get('results',[])}
+              if required<=keys:
+                  print('PASS: private channel bound, verified HUMO peer stored, dashboard published.')
+                  break
+              if attempt==17:
+                  print('Finance configuration keys present:',len(keys),'of',len(required))
+                  raise SystemExit('Channel activation not yet verified')
+              time.sleep(5)
+          r=req('/d1/database/'+db+'/query',{'sql':"SELECT COUNT(*) AS n FROM fin_ops WHERE amount<0"})
+          print('Observed debit records:',r[0]['results'][0]['n'])
+          h=json.loads(subprocess.check_output(['curl','-fsSL','--max-time','20','https://arslan-boost-bot.zenin7210.workers.dev/healthz']))
+          assert h['ok'] and h['paymentsEnabled']
+          print('PASS: marketplace healthy and payments enabled.')
+          PY
