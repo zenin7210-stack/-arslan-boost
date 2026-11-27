@@ -1,0 +1,67 @@
+name: Finance compatibility audit (read only)
+on:
+  push:
+    branches: [finance-deploy-preflight]
+    paths: ['.github/workflows/finance-compatibility.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore verified storefront source
+        run: |
+          python -m pip install -q Pillow==11.3.0
+          python releases/catalog-v11/build.py release
+      - name: Run existing marketplace tests without deployment
+        working-directory: release
+        run: |
+          npm test > /tmp/market-tests.txt 2>&1 || { tail -60 /tmp/market-tests.txt; exit 1; }
+          grep -E '^# (tests|pass|fail|skipped) ' /tmp/market-tests.txt
+      - name: Inspect safe integration anchors and live frontend parity
+        working-directory: release
+        run: |
+          python - <<'PY'
+          import json, urllib.request, pathlib
+          cfg=json.load(open('wrangler.production.jsonc'))
+          origin=cfg['vars']['MINIAPP_URL'].split('/?')[0]
+          source=pathlib.Path('src/worker.mjs').read_text()
+          for needle in ['async function handleWebhook','const update = await readObject(request);','callback_query','pre_checkout_query','allowed_updates','/relay/']:
+              print('Source anchor:',needle,source.count(needle))
+          for f in ['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js','assets/p2p.css']:
+              with urllib.request.urlopen(origin+'/'+f,timeout=25) as res: live=res.read()
+              print('Live asset matches assembled source:',f,live==pathlib.Path('public',f).read_bytes())
+          with urllib.request.urlopen(origin+'/healthz',timeout=25) as res: health=json.load(res)
+          print('Live Worker health:',health.get('ok') is True)
+          print('Live payments enabled:',health.get('paymentsEnabled') is True)
+          assert health.get('ok') is True
+          PY
+      - name: Read only finance and payment binding verification
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os,json,urllib.request
+          root='https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c'
+          def read(path):
+              req=urllib.request.Request(root+path,headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+              with urllib.request.urlopen(req,timeout=25) as r: j=json.load(r)
+              assert j['success']
+              return j['result']
+          s=read('/workers/scripts/arslan-boost-bot/settings')
+          b={x['name'] for x in s.get('bindings',[])}
+          for n in ['BOT_TOKEN','ADMIN_ID','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET','FINANCE_DB']:
+              print(n,'present:',n in b)
+          db=read('/d1/database?name=arslan-finance-channel')
+          assert any(x['name']=='arslan-finance-channel' for x in db)
+          print('Dedicated finance database exists.')
+          print('Read-only audit complete. No deployment, webhook changes or payment writes.')
+          PY
