@@ -1,0 +1,38 @@
+name: Finance deployment preflight
+on:
+  push:
+    branches: [finance-deploy-preflight]
+permissions:
+  contents: read
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify existing Cloudflare access (read only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          token=os.environ.get('CLOUDFLARE_API_TOKEN')
+          if not token:
+              raise SystemExit('Cloudflare secret unavailable')
+          root='https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c'
+          def get(path):
+              req=urllib.request.Request(root+path,headers={'Authorization':'Bearer '+token})
+              with urllib.request.urlopen(req,timeout=20) as resp: data=json.load(resp)
+              if not data.get('success'): raise RuntimeError('Cloudflare read failed')
+              return data['result']
+          settings=get('/workers/scripts/arslan-boost-bot/settings')
+          names={b.get('name') for b in settings.get('bindings',[])}
+          print('Worker access OK')
+          print('Existing bot token binding present:', 'BOT_TOKEN' in names)
+          print('Existing admin binding present:', 'ADMIN_ID' in names)
+          print('Finance database binding present:', 'FINANCE_DB' in names)
+          dep=get('/workers/scripts/arslan-boost-bot/deployments')
+          latest=max(dep['deployments'],key=lambda d:d['created_on'])
+          versions=latest['versions']
+          assert len(versions)==1 and versions[0]['percentage']==100,'Active rollout; stop'
+          print('Single active production deployment verified; no production changes made')
+          PY
