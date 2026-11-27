@@ -1,0 +1,220 @@
+name: Finance opening balance rollout
+on:
+  push:
+    branches: [finance-deploy-preflight]
+    paths: ['.github/workflows/finance-balance-rollout.yml']
+permissions:
+  contents: read
+concurrency:
+  group: arslan-boost-production
+  cancel-in-progress: false
+jobs:
+  verify-and-rollout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore exact successful marketplace release
+        run: |
+          set -euo pipefail
+          python -m pip install -q Pillow==11.3.0 requests
+          python releases/catalog-v11/build.py release
+      - name: Verify and test isolated finance source
+        run: |
+          set -euo pipefail
+          mkdir -p finance
+          python - <<'PY'
+          import base64, hashlib, lzma, tarfile, io, pathlib
+          b=base64.b64decode(''.join(pathlib.Path('releases/finance-v4/source.xz64.txt').read_text().split()),validate=True)
+          assert hashlib.sha256(b).hexdigest()=='42b5e1434400c73704320b98c44e228852d71e6fceedaded13aea6b5596b2a4e'
+          with tarfile.open(fileobj=io.BytesIO(lzma.decompress(b))) as t:
+              assert set(t.getnames())=={'finance.mjs','finance.sql','test.mjs','finance_relay.py','patch-boost.py','patch-render.py'}
+              t.extractall('finance',filter='data')
+          PY
+          python releases/finance-v4/compact-commands.py finance
+          python releases/finance-v4/group-menu.py finance
+          python releases/finance-v4/finance-v5.py finance
+          python releases/finance-v4/balance-snapshot.py finance
+          node --test finance/test.mjs
+          mkdir -p /tmp/finance-listener
+          cp main.py /tmp/finance-listener/main.py
+          python finance/patch-render.py /tmp/finance-listener/main.py
+          python -m py_compile /tmp/finance-listener/main.py /tmp/finance-listener/finance_relay.py
+          PYTHONPATH=/tmp/finance-listener python - <<'PY'
+          import ast, pathlib
+          from finance_relay import eligible
+          a=ast.parse(pathlib.Path('main.py').read_text())
+          b=ast.parse(pathlib.Path('/tmp/finance-listener/main.py').read_text())
+          defs=lambda root:{x.name:ast.dump(x,include_attributes=False) for x in root.body if isinstance(x,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef))}
+          old,new=defs(a),defs(b)
+          assert set(old)==set(new)
+          for k in old:
+              if k!='listen': assert old[k]==new[k],f'Market relay function changed: {k}'
+          credit="🎉 To'ldirish\n+ 12.000,00 UZS\n📍 TEST\n💳 HUMOCARD *1234\n🕒 19:10 15.11.2026\n💰 12.100,50 UZS"
+          debit="💸 To'lov\n− 2.050,25 UZS\n📍 TEST\n💳 HUMOCARD *1234\n🕒 19:11 15.11.2026\n💰 10.050,25 UZS"
+          assert eligible(credit,'1234') and eligible(debit,'1234')
+          assert not eligible(debit,'9999') and not eligible(credit+'\nOTP 123456','1234') and not eligible(debit.replace('−','+'),'1234')
+          print('PASS: existing marketplace relay functions unchanged; both transaction directions accepted.')
+          PY
+      - name: Add only isolated finance routes and run marketplace regression
+        run: |
+          set -euo pipefail
+          cp release/src/worker.mjs /tmp/market-worker-original.mjs
+          python finance/patch-boost.py release
+          python - <<'PY'
+          from pathlib import Path
+          a=Path('/tmp/market-worker-original.mjs').read_text()
+          p=Path('release/src/worker.mjs')
+          b=p.read_text()
+          cron='  async scheduled(_controller, env, ctx) {'
+          extra_import='import { financeMaintenance } from "./finance.mjs";\n'
+          extra_cron='\n    ctx.waitUntil(financeMaintenance(env).catch(() => console.error("Finance maintenance failed")));'
+          assert b.count(cron)==1,'Scheduled handler anchor changed'
+          b=extra_import+b.replace(cron,cron+extra_cron,1)
+          p.write_text(b)
+          assert b.count(extra_import)==1 and b.count(extra_cron)==1
+          b=b.replace(extra_import,'',1).replace(extra_cron,'',1)
+          for line in ['import { handleFinanceUpdate, handleFinanceRelay } from "./finance.mjs";\n','\n  if (await handleFinanceUpdate(env, update)) return new Response("OK");','\n    if (path === "/finance/relay") return await handleFinanceRelay(request, env);']:
+              assert b.count(line)==1
+              b=b.replace(line,'',1)
+          assert a==b,'Unexpected marketplace source change'
+          PY
+          node --check release/src/worker.mjs
+          cd release
+          npm test > /tmp/finance-market-tests.log 2>&1 || { grep -A 12 '^not ok' /tmp/finance-market-tests.log; exit 1; }
+          grep -E '^# (tests|pass|fail|skipped) ' /tmp/finance-market-tests.log
+          grep -q '^# pass 92$' /tmp/finance-market-tests.log
+          grep -q '^# fail 0$' /tmp/finance-market-tests.log
+      - name: Confirm exact active version, bindings and static assets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd release
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,urllib.request
+          cfg=json.load(open('wrangler.production.jsonc'))
+          root='https://api.cloudflare.com/client/v4/accounts/'+cfg['account_id']
+          def get(path):
+              req=urllib.request.Request(root+path,headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+              with urllib.request.urlopen(req,timeout=25) as r: j=json.load(r)
+              assert j['success']
+              return j['result']
+          base='/workers/scripts/'+cfg['name']
+          latest=max(get(base+'/deployments')['deployments'],key=lambda d:d['created_on'])
+          versions=latest['versions']
+          assert len(versions)==1 and versions[0]['percentage']==100 and versions[0]['version_id']=='d03f8626-563c-44c1-803f-da01112090f8','Production version changed: refusing deployment'
+          bindings=get(base+'/settings')['bindings']
+          names={b['name'] for b in bindings}
+          assert {'BOT_TOKEN','ADMIN_ID','DB','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'}<=names
+          assert 'FINANCE_DB' in names
+          pathlib.Path('/tmp/finance-old-bindings.json').write_text(json.dumps(sorted([b['name'],b['type']] for b in bindings)))
+          dbs=get('/d1/database?name=arslan-finance-channel')
+          ds=[d for d in dbs if d['name']=='arslan-finance-channel']
+          assert len(ds)==1
+          assert any(b['name']=='FINANCE_DB' and b.get('id')==ds[0]['uuid'] for b in bindings), 'Existing ledger binding mismatch'
+          assert not any(d.get('binding')=='FINANCE_DB' for d in cfg.get('d1_databases',[]))
+          cfg.setdefault('d1_databases',[]).append({'binding':'FINANCE_DB','database_name':'arslan-finance-channel','database_id':ds[0]['uuid']})
+          pathlib.Path('wrangler.production.jsonc').write_text(json.dumps(cfg,indent=2))
+          origin=cfg['vars']['MINIAPP_URL'].split('/?')[0]
+          paths=['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js','assets/p2p.css']
+          for f in paths:
+              live=subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',origin+'/'+f+'?finance-check=1'])
+              assert live==pathlib.Path('public',f).read_bytes(),'Live storefront mismatch: '+f
+          health=json.loads(subprocess.check_output(['curl','-fsSL','--max-time','20',origin+'/healthz']))
+          assert health['ok'] and health['paymentsEnabled']
+          print('PASS: exact known live version, all six static assets, healthy payments, isolated D1.')
+          PY
+      - name: Compile Worker without deploying
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4.166.0 deploy --dry-run --outdir /tmp/finance-worker-dry-run --config wrangler.production.jsonc >/tmp/finance-dry-run.log 2>&1
+          echo 'PASS: production bundle compiles'
+      - name: Deploy the same marketplace with additive finance module
+        id: deploy
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,urllib.request
+          c=json.load(open('wrangler.production.jsonc'))
+          req=urllib.request.Request('https://api.cloudflare.com/client/v4/accounts/'+c['account_id']+'/workers/scripts/'+c['name']+'/deployments',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+          with urllib.request.urlopen(req,timeout=20) as r: j=json.load(r)
+          d=max(j['result']['deployments'],key=lambda x:x['created_on'])
+          assert d['versions']==[{'version_id':'d03f8626-563c-44c1-803f-da01112090f8','percentage':100}] or (len(d['versions'])==1 and d['versions'][0]['version_id']=='d03f8626-563c-44c1-803f-da01112090f8' and d['versions'][0]['percentage']==100)
+          PY
+          npx --yes wrangler@4.166.0 deploy --config wrangler.production.jsonc --keep-vars >/tmp/finance-deploy.log 2>&1
+          grep -E 'Current Version ID:|Deployed arslan-boost-bot' /tmp/finance-deploy.log
+          version=$(sed -nE 's/^.*Current Version ID: ([0-9a-f-]{36}).*$/\1/p' /tmp/finance-deploy.log)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Verify deployed market, payments and finance route
+        working-directory: release
+        env:
+          DEPLOYED_VERSION: ${{ steps.deploy.outputs.version }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,os,pathlib,subprocess,time,urllib.request
+          c=json.load(open('wrangler.production.jsonc'))
+          origin=c['vars']['MINIAPP_URL'].split('/?')[0]
+          def fetch(path): return subprocess.check_output(['curl','-fsSL','--max-time','20',origin+'/'+path])
+          for i in range(8):
+              try:
+                  h=json.loads(fetch('healthz'))
+                  assert h['ok'] and h['paymentsEnabled']
+                  for f in ['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js','assets/p2p.css']:
+                      assert fetch(f+'?finance-verify='+str(i))==pathlib.Path('public',f).read_bytes()
+                  p=subprocess.run(['curl','-sS','--max-time','15','-X','POST','-w','\n%{http_code}',origin+'/finance/relay','-d','{}'],capture_output=True,text=True,check=True)
+                  body,code=p.stdout.rsplit('\n',1)
+                  assert code=='403' and json.loads(body)['error']=='forbidden'
+                  break
+              except Exception:
+                  if i==7: raise
+                  time.sleep(3)
+          root='https://api.cloudflare.com/client/v4/accounts/'+c['account_id']+'/workers/scripts/'+c['name']
+          def read(path):
+              req=urllib.request.Request(root+path,headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+              with urllib.request.urlopen(req,timeout=20) as r: j=json.load(r)
+              assert j['success']
+              return j['result']
+          new=read('/settings')['bindings']
+          actual={(b['name'],b['type']) for b in new}
+          old={tuple(x) for x in json.load(open('/tmp/finance-old-bindings.json'))}
+          assert old<=actual,'Existing binding missing'
+          assert any(b['name']=='FINANCE_DB' and b['type']=='d1' for b in new)
+          d=max(read('/deployments')['deployments'],key=lambda x:x['created_on'])
+          assert len(d['versions'])==1 and d['versions'][0]['percentage']==100 and d['versions'][0]['version_id']==os.environ['DEPLOYED_VERSION']
+          print('PASS: opening balance Worker active; storefront identical; payments healthy; existing bindings preserved.')
+          PY
+      - name: Roll back on production verification failure
+        if: failure() && steps.deploy.outputs.version != ''
+        working-directory: release
+        env:
+          DEPLOYED_VERSION: ${{ steps.deploy.outputs.version }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PYVERIFY'
+          import json, os, urllib.request
+          c=json.load(open('wrangler.production.jsonc'))
+          url='https://api.cloudflare.com/client/v4/accounts/'+c['account_id']+'/workers/scripts/'+c['name']+'/deployments'
+          req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+          with urllib.request.urlopen(req,timeout=20) as r: result=json.load(r)
+          active=max(result['result']['deployments'],key=lambda d:d['created_on'])['versions']
+          assert len(active)==1 and active[0]['version_id']==os.environ['DEPLOYED_VERSION'] and active[0]['percentage']==100,'Another version is active; aborting rollback'
+          PYVERIFY
+          npx --yes wrangler@4.166.0 rollback d03f8626-563c-44c1-803f-da01112090f8 --config wrangler.production.jsonc --message "Restore verified market after finance rollout failure" >/tmp/finance-rollback.log 2>&1
+          echo 'Rolled back to previously verified production version'
