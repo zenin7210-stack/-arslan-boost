@@ -1,0 +1,57 @@
+name: Deploy ARSLAN BOOST to Cloudflare (manual only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY to update the existing Cloudflare Worker"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arslan-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'DEPLOY'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract and check package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f arslan-boost-worker.zip
+          unzip -t arslan-boost-worker.zip | tail -1
+          mkdir -p prepared
+          unzip -q arslan-boost-worker.zip -d prepared
+          cd prepared
+          test -f wrangler.jsonc
+          test -f arslan-boost-worker.js
+          test -d public
+          test -d migrations
+          count="$(find public -type f | wc -l | tr -d ' ')"
+          actual="$(find public -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f1)"
+          expected="5768a9fd255de426d2a1ddded9ccf3a48f0d7fc200ae5be2e110c784c9192fc6"
+          test "$count" = "79"
+          test "$actual" = "$expected" || { echo "ERROR: UI differs from user-approved version. Refusing to deploy."; exit 1; }
+          echo "Verified original Mini App design (79 files)"
+
+      - name: Deploy Cloudflare Worker without overwriting secrets
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: "b4cabfc322b7108c44aa96a7bae0010c"
+          workingDirectory: "prepared"
+          command: "deploy --keep-vars"
+
+      - name: Deployment notes
+        run: |
+          echo "Worker deployed from existing GitHub archive. No D1 SQL migrations were executed."
+          echo "P2P autoconfirmation must stay disabled until a verified bank-to-order attribution method is established."
