@@ -26,6 +26,17 @@ def send(origin, secret, peer, message):
     except (requests.RequestException, ValueError):
         return False
 
+def send_snapshot(origin, secret, peer, message):
+    """A balance observation is never a payment event or profit entry."""
+    try:
+        r=requests.post(origin+'/finance/relay',json={'action':'balance_snapshot','eventId':f'tg:{peer}:{message.id}','text':message.raw_text},headers={'Authorization':'Bearer '+secret},timeout=10,allow_redirects=False)
+        return r.status_code==200 and r.json().get('snapshot') is True
+    except (requests.RequestException, ValueError):
+        return False
+
+def latest_notice(messages,card):
+    return max((m for m in messages if m.date and not m.out and not m.fwd_from and eligible(m.raw_text,card)),key=lambda m:m.id,default=None)
+
 def configure(origin, secret, peer, card, channel):
     try:
         r=requests.post(origin+'/finance/relay',json={'action':'configure','channel':channel,'card':card,'peer':str(peer)},headers={'Authorization':'Bearer '+secret},timeout=15,allow_redirects=False)
@@ -46,10 +57,20 @@ async def poll_finance(client, bot, origin, secret, pinned_peer, card, channel='
         while not await asyncio.to_thread(configure,origin,secret,bot.id,card,channel):
             await asyncio.sleep(60)
     seen={}
+    snapshot_seen=0
+    next_history_search=0
     while True:
         try:
             cutoff=datetime.now(timezone.utc)-timedelta(hours=24)
             recent=await client.get_messages(bot,limit=150)
+            latest=latest_notice(recent,card)
+            if latest is None and not snapshot_seen and time.monotonic()>=next_history_search:
+                next_history_search=time.monotonic()+300
+                latest=latest_notice(await client.get_messages(bot,limit=100,search=card),card)
+            if latest is not None and latest.id>snapshot_seen:
+                if await asyncio.to_thread(send_snapshot,origin,secret,bot.id,latest):
+                    snapshot_seen=latest.id
+                    LOG.info('Verified HUMO balance snapshot accepted')
             for m in reversed(recent):
                 if not m.date or m.date<cutoff or m.out or m.fwd_from or m.id in seen or not eligible(m.raw_text,card):continue
                 if await asyncio.to_thread(send,origin,secret,bot.id,m): seen[m.id]=m.date
