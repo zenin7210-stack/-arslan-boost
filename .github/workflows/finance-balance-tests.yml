@@ -1,0 +1,35 @@
+name: Finance balance snapshot tests
+on:
+  push:
+    branches: [finance-deploy-preflight]
+    paths: ['.github/workflows/finance-balance-tests.yml','releases/finance-v4/balance-snapshot.py']
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Extract known finance source and apply UI changes
+        run: |
+          mkdir -p finance
+          python - <<'PY'
+          import base64, hashlib, lzma, tarfile, io, pathlib
+          b=base64.b64decode(''.join(pathlib.Path('releases/finance-v4/source.xz64.txt').read_text().split()),validate=True)
+          assert hashlib.sha256(b).hexdigest()=='42b5e1434400c73704320b98c44e228852d71e6fceedaded13aea6b5596b2a4e'
+          with tarfile.open(fileobj=io.BytesIO(lzma.decompress(b))) as t:
+              assert set(t.getnames())=={'finance.mjs','finance.sql','test.mjs','finance_relay.py','patch-boost.py','patch-render.py'}
+              t.extractall('finance',filter='data')
+          PY
+          python releases/finance-v4/compact-commands.py finance
+          python releases/finance-v4/group-menu.py finance
+          python releases/finance-v4/finance-v5.py finance
+          python releases/finance-v4/balance-snapshot.py finance
+      - name: Run finance tests with mocked Telegram and local test database
+        run: |
+          node --check finance/finance.mjs
+          node --test finance/test.mjs
