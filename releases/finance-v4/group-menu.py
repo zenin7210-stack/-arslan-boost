@@ -27,7 +27,7 @@ async function groupUpdate(e,m){
   if(!configured(e)||!['group','supergroup'].includes(m?.chat?.type)||String(m.chat.id)!==String(e.FINANCE_CHANNEL_ID))return false;
   await verifyChannel(e);
   if(!m.from||m.from.is_bot)return true;
-  const command=groupButtons[m.text]?{view:groupButtons[m.text],page:0}:parseChannelCommand(m.text);
+  const command=Object.hasOwn(groupButtons,m.text)?{view:groupButtons[m.text],page:0}:parseChannelCommand(m.text);
   if(!command)return true;
   if(command.view==='home')await refresh(e);
   if(command.view==='help'){await call(e,'sendMessage',{chat_id:m.chat.id,text:'<b>MOLIYA MENYUSI</b>\\nKerakli bo‘limni tanlang.',parse_mode:'HTML',reply_markup:groupKeyboard,protect_content:true});return true;}
@@ -36,7 +36,7 @@ async function groupUpdate(e,m){
   return true;
 }
 """+s[i:]
-replace("  const q=u.callback_query,m=u.message;\n  const cc=", "  const q=u.callback_query,m=u.message;\n  if(e.FINANCE_DB&&['group','supergroup'].includes(m?.chat?.type)){const x=await financeEnv(e);if(await groupUpdate(x,m))return true;}\n  const cc=")
+replace("  const q=u.callback_query,m=u.message;\n  const cc=", "  const q=u.callback_query,m=u.message;\n  if(e.FINANCE_DB&&['group','supergroup'].includes(m?.chat?.type)&&(Object.hasOwn(groupButtons,m.text)||parseChannelCommand(m.text))){const x=await financeEnv(e);if(await groupUpdate(x,m))return true;}\n  const cc=")
 # Only the authenticated configuration route may move the ledger, and only to a private group verified by Telegram.
 replace("if((x.FINANCE_CHANNEL_ID&&String(x.FINANCE_CHANNEL_ID)!==channel)||(x.FINANCE_CARD_LAST4&&String(x.FINANCE_CARD_LAST4)!==card)||(x.FINANCE_HUMO_BOT_ID!=='0'&&String(x.FINANCE_HUMO_BOT_ID)!==peer))return reply({error:'configuration_conflict'},409);","if((x.FINANCE_CARD_LAST4&&String(x.FINANCE_CARD_LAST4)!==card)||(x.FINANCE_HUMO_BOT_ID!=='0'&&String(x.FINANCE_HUMO_BOT_ID)!==peer))return reply({error:'configuration_conflict'},409);\n    const moving=!!x.FINANCE_CHANNEL_ID&&String(x.FINANCE_CHANNEL_ID)!==channel;")
 replace("const candidate={...x,FINANCE_CHANNEL_ID:channel};\n    await verifyChannel(candidate);","const candidate={...x,FINANCE_CHANNEL_ID:channel};\n    const chat=await verifyChannel(candidate);\n    if(moving&&chat.type==='channel')return reply({error:'configuration_conflict'},409);")
