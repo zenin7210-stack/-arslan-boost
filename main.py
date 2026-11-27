@@ -220,6 +220,7 @@ async def listen():
     LOG.info("Listener setup stage=telegram_connect")
     client = TelegramClient(StringSession(session), api_id, api_hash)
     await client.connect()
+    finance_task = None
     LOG.info("Listener setup stage=telegram_connected")
     try:
         if not await client.is_user_authorized():
@@ -251,6 +252,10 @@ async def listen():
         LOG.info("Telethon authorized; verified_sources=%s mode=%s",
                  ",".join(peers), "READ_ONLY" if dry_run else "RELAY")
         seen = {}
+        if os.getenv("FINANCE_RELAY_ENABLED", "0") == "1" and "humo" in peers:
+            from finance_relay import poll_finance
+            finance_task = asyncio.create_task(poll_finance(client, peers["humo"], worker_url,
+                config["humo"]["secret"], config["humo"]["peer_id"], os.getenv("FINANCE_CARD_LAST4", ""), os.getenv("FINANCE_CHANNEL_ID", "")))
         while True:
             try:
                 await process_messages(
@@ -259,6 +264,9 @@ async def listen():
                 LOG.warning("Temporary Telegram error type=%s", type(exc).__name__)
             await asyncio.sleep(SCAN_SECONDS)
     finally:
+        if finance_task is not None:
+            finance_task.cancel()
+            await asyncio.gather(finance_task, return_exceptions=True)
         await client.disconnect()
 
 

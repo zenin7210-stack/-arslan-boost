@@ -1,0 +1,3 @@
+# Finance V4
+
+The verified Cloudflare rollout uses the finance-v4 source archive on the finance-deploy-preflight branch. Preserve its additive worker hooks and FINANCE_DB binding when building future storefront releases. The Python listener uses a separately enabled finance task; existing incoming-payment relay functions are unchanged. Keep FINANCE_CHANNEL_ID and FINANCE_CARD_LAST4 in private service configuration, never in this repository. FINANCE_RELAY_ENABLED defaults to 0.
