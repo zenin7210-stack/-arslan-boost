@@ -1,0 +1,56 @@
+name: Prepare isolated finance database
+on:
+  push:
+    branches: [finance-deploy-preflight]
+    paths: ['.github/workflows/finance-database.yml']
+permissions:
+  contents: read
+concurrency:
+  group: finance-db-provision
+  cancel-in-progress: false
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create and verify dedicated D1 database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.parse
+          token=os.environ.get('CLOUDFLARE_API_TOKEN')
+          if not token:
+              raise SystemExit('Cloudflare secret unavailable')
+          root='https://api.cloudflare.com/client/v4/accounts/b4cabfc322b7108c44aa96a7bae0010c'
+          def request(path, body=None):
+              req=urllib.request.Request(root+path,
+                data=None if body is None else json.dumps(body).encode(),
+                headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'})
+              with urllib.request.urlopen(req, timeout=25) as resp: data=json.load(resp)
+              if not data.get('success'): raise RuntimeError('Cloudflare request failed')
+              return data['result']
+          name='arslan-finance-channel'
+          dbs=request('/d1/database?'+urllib.parse.urlencode({'name':name,'per_page':100}))
+          matches=[x for x in dbs if x.get('name')==name]
+          if len(matches)>1: raise RuntimeError('Ambiguous finance database')
+          db=matches[0] if matches else request('/d1/database',{'name':name})
+          assert db['name']==name
+          dbid=db['uuid']
+          statements=[
+          """CREATE TABLE IF NOT EXISTS fin_ops(id INTEGER PRIMARY KEY AUTOINCREMENT,event_key TEXT NOT NULL UNIQUE,ts INTEGER NOT NULL,amount INTEGER NOT NULL CHECK(amount<>0),balance INTEGER NOT NULL,kind TEXT NOT NULL CHECK(kind IN('pending','profit','expense','ignore','ARSLAN','BEXA','ASAD')),post_id INTEGER,actor TEXT,classified_at INTEGER)""",
+          "CREATE INDEX IF NOT EXISTS fin_ops_ts ON fin_ops(ts,id)",
+          "CREATE TABLE IF NOT EXISTS fin_config(k TEXT PRIMARY KEY,v TEXT NOT NULL)",
+          "CREATE TABLE IF NOT EXISTS fin_audit(id INTEGER PRIMARY KEY AUTOINCREMENT,operation_id INTEGER NOT NULL,old_kind TEXT NOT NULL,new_kind TEXT NOT NULL,actor TEXT NOT NULL,ts INTEGER NOT NULL)",
+          "CREATE TRIGGER IF NOT EXISTS fin_audit_class AFTER UPDATE OF kind ON fin_ops WHEN OLD.kind<>NEW.kind BEGIN INSERT INTO fin_audit(operation_id,old_kind,new_kind,actor,ts) VALUES(NEW.id,OLD.kind,NEW.kind,NEW.actor,NEW.classified_at); END;"
+          ]
+          def query(sql):
+              result=request('/d1/database/'+dbid+'/query',{'sql':sql})
+              if not all(x.get('success') for x in result): raise RuntimeError('SQL failed')
+              return [r for x in result for r in x.get('results',[])]
+          for sql in statements: query(sql)
+          names={x['name'] for x in query("SELECT name FROM sqlite_master WHERE name LIKE 'fin_%'")}
+          assert {'fin_ops','fin_ops_ts','fin_config','fin_audit','fin_audit_class'}<=names
+          print('PASS: isolated finance database and all five schema objects verified')
+          print('No existing Worker or payment database modified.')
+          PY
