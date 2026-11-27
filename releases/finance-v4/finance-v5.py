@@ -101,6 +101,8 @@ export async function financeMaintenance(env,now=Date.now()){
 rep("(Object.hasOwn(groupButtons,m.text)||parseChannelCommand(m.text))&&e.FINANCE_DB","(Object.hasOwn(groupButtons,m.text)||parseChannelCommand(m.text)||extraCommand(m.text))&&e.FINANCE_DB")
 # show lifetime earnings in shares, independently from bank card balance
 rep("line('Qolgan',fmt(s.due[i])),line('Olingan',fmt(s.taken[i]))","line('Hisoblangan',fmt(s.due[i]+s.taken[i])),line('Olingan',fmt(s.taken[i])),line('Qolgan',fmt(s.due[i]))")
+# Pass only financial and Telegram bindings instead of spreading the entire Worker environment.
+rep("return {...e,FINANCE_OWNER_ID:e.FINANCE_OWNER_ID||e.ADMIN_ID,", "return {FINANCE_DB:e.FINANCE_DB,BOT_TOKEN:e.BOT_TOKEN,WEBHOOK_SECRET:e.WEBHOOK_SECRET,FINANCE_ADMIN_IDS:e.FINANCE_ADMIN_IDS,FINANCE_OWNER_ID:e.FINANCE_OWNER_ID||e.ADMIN_ID,")
 p.write_text(s)
 t=root/'test.mjs';s=t.read_text()
 s += """
