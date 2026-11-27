@@ -103,6 +103,22 @@ rep("(Object.hasOwn(groupButtons,m.text)||parseChannelCommand(m.text))&&e.FINANC
 rep("line('Qolgan',fmt(s.due[i])),line('Olingan',fmt(s.taken[i]))","line('Hisoblangan',fmt(s.due[i]+s.taken[i])),line('Olingan',fmt(s.taken[i])),line('Qolgan',fmt(s.due[i]))")
 # Pass only financial and Telegram bindings instead of spreading the entire Worker environment.
 rep("return {...e,FINANCE_OWNER_ID:e.FINANCE_OWNER_ID||e.ADMIN_ID,", "return {FINANCE_DB:e.FINANCE_DB,BOT_TOKEN:e.BOT_TOKEN,WEBHOOK_SECRET:e.WEBHOOK_SECRET,FINANCE_ADMIN_IDS:e.FINANCE_ADMIN_IDS,FINANCE_OWNER_ID:e.FINANCE_OWNER_ID||e.ADMIN_ID,")
+# Owner-only portable backup, never sent to the group; no tokens or other databases included.
+idx=s.index("export async function handleFinanceUpdate(")
+s=s[:idx]+"""async function financeBackup(e,m){
+  if(!owner(e,m.from?.id)||!configured(e)||String(m.chat.id)!==String(m.from.id))return true;
+  const data={schema:1,created_at:new Date().toISOString(),operations:await rows(e),audit:(await stmt(e,'SELECT * FROM fin_audit ORDER BY id').all()).results,notes:(await stmt(e,"SELECT k,v FROM fin_config WHERE k LIKE 'note:%' OR k LIKE 'noteaudit:%'").all()).results};
+  const json=JSON.stringify(data,null,2);
+  if(new TextEncoder().encode(json).byteLength>10*1024*1024){await call(e,'sendMessage',{chat_id:m.chat.id,text:'Zaxira juda katta. Ma’lumotlar bazasidan eksport qiling.'});return true;}
+  const form=new FormData();form.set('chat_id',String(m.chat.id));form.set('protect_content','true');form.set('document',new Blob([json],{type:'application/json'}),'arslan-finance-'+localDate(Date.now())+'.json');
+  const response=await fetch('https://api.telegram.org/bot'+e.BOT_TOKEN+'/sendDocument',{method:'POST',body:form});
+  if(!(await response.json()).ok)throw Error('Finance backup delivery failed');
+  return true;
+}
+"""+s[idx:]
+rep("  const x=await financeEnv(e);\n  const setup=", "  const x=await financeEnv(e);\n  if(m?.chat?.type==='private'&&/^\\/finance_backup(?:@arslanboostbot)?$/.test(m.text||''))return financeBackup(x,m);\n  const setup=")
+rep("await stmt(e,'INSERT OR REPLACE INTO fin_config(k,v) VALUES(?,?)','note:'+id,value.slice(0,240)).run();","const prev=(await stmt(e,'SELECT v FROM fin_config WHERE k=?','note:'+id).first())?.v||'';\n      await e.FINANCE_DB.batch([stmt(e,'INSERT OR REPLACE INTO fin_config(k,v) VALUES(?,?)','note:'+id,value.slice(0,240)),stmt(e,'INSERT INTO fin_config(k,v) VALUES(?,?)','noteaudit:'+id+':'+Date.now()+':'+crypto.randomUUID(),JSON.stringify({actor:String(m.from.id),old:prev,new:value.slice(0,240),ts:Date.now()}))]);")
+rep("small('Tuzatish va izoh faqat mas’ul admin uchun.')","small('Tuzatish va izoh faqat mas’ul admin uchun.'),small('Zaxira: botga shaxsiy /finance_backup')")
 p.write_text(s)
 t=root/'test.mjs';s=t.read_text()
 s += """
@@ -111,3 +127,8 @@ test('Tashkent day boundaries and previous month do not reset balances',()=>{con
 test('scheduled finance maintenance only deletes queued transient IDs and sends each period once',async()=>{const {d,db}=d1test(),orig=globalThis.fetch;const n=Date.parse('2026-12-01T00:04:00+05:00'),calls=[];globalThis.fetch=async(url,opt)=>{const method=String(url).split('/').at(-1),data=JSON.parse(opt.body);calls.push({method,data});return {json:async()=>({ok:true,result:method==='getChat'?{type:'supergroup'}:{message_id:900}})};};try{const ch='-1001234567890';for(const [k,v] of Object.entries({channel:ch,card:'1234',track_from:'2026-11-01T00:00:00Z',humo_peer:'333',dashboard:'50',menu_group:'v5:'+ch,['temp:'+ch+':70']:String(n-1),['temp:'+ch+':71']:String(n+60000)}))d.prepare('INSERT INTO fin_config VALUES(?,?)').run(k,v);d.prepare("INSERT INTO fin_ops(event_key,ts,amount,balance,kind,post_id) VALUES('a',?,30000,30000,'profit',51)").run(n-600000);const e={FINANCE_DB:db,ADMIN_ID:'111',BOT_TOKEN:'test',get DB(){throw Error('market DB touched')}};await financeMaintenance(e,n);await financeMaintenance(e,n+1000);assert.deepEqual(calls.filter(c=>c.method==='deleteMessage').map(c=>c.data.message_id),[70]);assert.equal(calls.filter(c=>c.method==='sendMessage').length,2);assert.equal(d.prepare('SELECT kind FROM fin_ops').get().kind,'profit');}finally{globalThis.fetch=orig;d.close();}});
 """
 t.write_text(s)
+
+with t.open('a') as f:
+ f.write("""
+test('portable backup is owner-private only and contains no marketplace data',async()=>{const {d,db}=d1test(),orig=globalThis.fetch,calls=[];globalThis.fetch=async(url,opt)=>{calls.push({method:String(url).split('/').at(-1),body:opt.body});return {json:async()=>({ok:true,result:true})};};try{for(const [k,v] of Object.entries({channel:'-1001234567890',card:'1234',track_from:'2026-11-01T00:00:00Z',humo_peer:'333'}))d.prepare('INSERT INTO fin_config VALUES(?,?)').run(k,v);const e={FINANCE_DB:db,ADMIN_ID:'111',BOT_TOKEN:'test',get DB(){throw Error('market DB touched')}};const msg=id=>({message:{chat:{type:'private',id},from:{id},text:'/finance_backup'}});assert.equal(await handleFinanceUpdate(e,msg(222)),true);assert.equal(calls.length,0);assert.equal(await handleFinanceUpdate(e,msg(111)),true);assert.equal(calls[0].method,'sendDocument');assert.equal(calls[0].body.get('chat_id'),'111');const data=JSON.parse(await calls[0].body.get('document').text());assert.deepEqual(data.operations,[]);assert.equal(data.BOT_TOKEN,undefined);}finally{globalThis.fetch=orig;d.close();}});
+""")
