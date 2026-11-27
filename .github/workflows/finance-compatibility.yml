@@ -30,16 +30,16 @@ jobs:
         working-directory: release
         run: |
           python - <<'PY'
-          import json, urllib.request, pathlib
+          import json, urllib.request, pathlib, subprocess
           cfg=json.load(open('wrangler.production.jsonc'))
           origin=cfg['vars']['MINIAPP_URL'].split('/?')[0]
           source=pathlib.Path('src/worker.mjs').read_text()
           for needle in ['async function handleWebhook','const update = await readObject(request);','callback_query','pre_checkout_query','allowed_updates','/relay/']:
               print('Source anchor:',needle,source.count(needle))
           for f in ['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js','assets/p2p.css']:
-              with urllib.request.urlopen(origin+'/'+f,timeout=25) as res: live=res.read()
+              live=subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',origin+'/'+f+'?finance-audit='+str(__import__('time').time_ns())])
               print('Live asset matches assembled source:',f,live==pathlib.Path('public',f).read_bytes())
-          with urllib.request.urlopen(origin+'/healthz',timeout=25) as res: health=json.load(res)
+          health=json.loads(subprocess.check_output(['curl','-fsSL','--max-time','25',origin+'/healthz']))
           print('Live Worker health:',health.get('ok') is True)
           print('Live payments enabled:',health.get('paymentsEnabled') is True)
           assert health.get('ok') is True
