@@ -2,7 +2,7 @@ name: ARSLAN product UI rollout
 on:
   push:
     branches: [finance-deploy-preflight]
-    paths: ['.github/workflows/finance-balance-rollout.yml']
+    paths: ['.github/workflows/finance-balance-rollout.yml','releases/product-ui/**']
 permissions:
   contents: read
   statuses: write
