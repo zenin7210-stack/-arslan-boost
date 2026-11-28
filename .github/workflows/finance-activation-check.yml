@@ -44,6 +44,20 @@ jobs:
                   raise SystemExit('Private finance group menu activation not verified')
               time.sleep(5)
           print('PASS: Telegram accepted the scoped menu and published the dashboard in the bound finance group; HUMO configured.')
+          # Verify the reported pair against real ledger rows and Telegram delivery markers.
+          # The incident fingerprint keeps transaction values out of source and build logs.
+          import hashlib
+          records=req('/d1/database/'+db+'/query',{'sql':"""SELECT ts,amount,balance,post_id FROM fin_ops ORDER BY ts DESC,id DESC LIMIT 250"""})[0]['results']
+          target='cbf8e5c217b95b473d1d0c5ba7c15acf9a977ce70e3fdef9337918f6d59afa55'
+          def matches(a,b):
+              if not (a['ts']==b['ts'] and a['post_id'] and b['post_id']): return False
+              fields=(a['ts'],a['amount'],a['balance'],b['amount'],b['balance'])
+              return hashlib.sha256('|'.join(map(str,fields)).encode()).hexdigest()==target
+          assert any(matches(a,b) for a in records for b in records), 'Reported notices not both delivered'
+          snap=req('/d1/database/'+db+'/query',{'sql':"SELECT v FROM fin_config WHERE k='bank_balance'"})[0]['results']
+          snapshot=json.loads(snap[0]['v'])
+          assert any(matches(a,b) and (snapshot['ts']>b['ts'] or (snapshot['ts']==b['ts'] and snapshot['balance']==b['balance'])) for a in records for b in records),'Snapshot is stale'
+          print('PASS: reported credit and debit delivered, current balance verified.')
           h=json.loads(subprocess.check_output(['curl','-fsSL','--max-time','20','https://arslan-boost-bot.zenin7210.workers.dev/healthz']))
           assert h['ok'] and h['paymentsEnabled']
           print('PASS: marketplace healthy and payments enabled.')
