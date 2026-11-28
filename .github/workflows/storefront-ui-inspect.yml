@@ -1,0 +1,33 @@
+name: Inspect storefront UI source
+on:
+  push:
+    branches: [finance-deploy-preflight]
+    paths: ['.github/workflows/storefront-ui-inspect.yml']
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Link verification run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api repos/${{ github.repository }}/statuses/${{ github.sha }} -f state=pending -f context=storefront-ui -f target_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - run: python -m pip install -q Pillow==11.3.0
+      - run: python releases/catalog-v11/build.py release
+      - name: Inspect public UI only
+        run: |
+          python - <<'PY'
+          import pathlib
+          for name in ['public/app.js','public/assets/donat/shop.css','public/assets/donat/shop.js','public/index.html']:
+              s=pathlib.Path('release',name).read_text()
+              if name.endswith('app.js'):
+                  lines=s.splitlines()
+                  for i,line in enumerate(lines):
+                      if 'intro' in line.lower(): print(name,i,'\n'.join(lines[max(0,i-4):i+10]))
+              elif name.endswith('shop.css'): print(name,s[-25000:])
+              elif name.endswith('shop.js'): print(name,s[13000:24000])
+              else: print(name,s[-1800:])
+          PY
