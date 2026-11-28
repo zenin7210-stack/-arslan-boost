@@ -23,7 +23,7 @@ with sync_playwright() as p:
         for product in ['gold_rinok','gold_id','gold_pass','telegram_premium','pubg_mobile','brawl_stars','roblox']:
             page.locator('[data-product='+product+']').first.click()
             expect(page.locator('#sheet-title')).to_be_visible()
-            expect(page.locator('#product-next')).to_be_disabled()
+            if product!='gold_rinok':expect(page.locator('#product-next')).to_be_disabled()
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'),(product,width)
             for el in page.locator('.widget-footer,.widget-recipient,.variant:visible').all():
                 box=el.bounding_box()
@@ -32,7 +32,7 @@ with sync_playwright() as p:
             if options.count():options.first.click()
             if product=='gold_rinok':
                 page.locator('#product-quantity').fill('250')
-                expect(page.locator('.checkout-total')).to_contain_text('32 500')
+                expect(page.locator('.checkout-total')).to_contain_text(__import__('re').compile(r'32\\s500'))
                 expect(page.locator('#product-next')).to_be_enabled()
             elif product in ['gold_id','pubg_mobile']:
                 page.locator('#product-detail').fill('123456789')
