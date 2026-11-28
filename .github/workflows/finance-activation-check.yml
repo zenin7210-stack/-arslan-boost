@@ -28,7 +28,7 @@ jobs:
           sql = """
             SELECT EXISTS (
               SELECT 1 FROM fin_config AS c
-              JOIN fin_config AS m ON m.k='menu_group' AND m.v=c.v
+              JOIN fin_config AS m ON m.k='menu_group' AND m.v=('v5:' || c.v)
               JOIN fin_config AS d ON d.k='dashboard' AND CAST(d.v AS INTEGER)>0
               JOIN fin_config AS p ON p.k='humo_peer' AND CAST(p.v AS INTEGER)>0
               JOIN fin_config AS k ON k.k='card' AND length(k.v)=4
