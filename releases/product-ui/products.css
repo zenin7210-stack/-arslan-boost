@@ -1,0 +1,60 @@
+
+/* Compact product screens in the existing ARSLAN blue palette. */
+.product-sheet{background:radial-gradient(ellipse at 90% 0,#102d45,transparent 45%),#071522}
+.product-sheet .sheet-head{margin:0 14px 12px;padding:4px 0 12px;border-bottom:1px solid #274456}
+.product-sheet #sheet-title{flex:1;text-align:left;justify-content:flex-start;gap:12px;font-size:17px;line-height:1.25}
+.product-sheet #sheet-title .widget-cover{width:100px;max-height:52px;overflow:hidden;border-radius:10px;border-color:#37596e}
+.product-sheet #sheet-title .widget-cover img{width:100%;height:48px;object-fit:contain}
+.product-sheet .close{flex:none;order:2;min-width:42px;min-height:42px;border-radius:12px}
+.product-sheet .widget-scroll{padding-inline:14px;scroll-padding-bottom:100px}
+.product-sheet .widget-scroll .widget-recipient{padding:12px;margin-bottom:14px;background:#0c2131;border:1px solid #294859;border-radius:14px}
+.product-sheet .widget-recipient label,.product-sheet .widget-label{font-size:12px;font-weight:650;letter-spacing:.03em;color:#b1c9d8}
+.product-sheet .widget-field-row{gap:8px}
+.product-sheet .widget-field-row input,.product-sheet #product-server-id{min-width:0;min-height:46px;border-radius:10px;background:#071925;border-color:#315568;font-size:16px}
+.product-sheet #verify-product-detail{min-height:46px;padding:0 12px;border-radius:10px;background:#12364a;color:#8de8f7;border:1px solid #2e647f}
+.product-sheet .widget-scroll[data-widget-product] .variant-list{display:grid;grid-template-columns:1fr;gap:8px}
+.product-sheet .widget-scroll .variant{position:relative;min-width:0;min-height:62px;padding:10px 12px;border:1px solid #294d64;border-radius:13px;background:linear-gradient(110deg,#102c40,#0a2030);box-shadow:none;transition:border-color .14s,background .14s,transform .1s}
+.product-sheet .widget-scroll .variant:not(.pack-option){display:flex;align-items:center;gap:10px;text-align:left}
+.product-sheet .widget-scroll .variant>span:not(.widget-pack-text):not(.widget-pack-art){font-size:14px;color:#e3eff5}
+.product-sheet .widget-scroll .variant>strong{margin-left:auto;font-size:14px;color:#8de5fb;white-space:nowrap}
+.product-sheet .widget-scroll .variant[aria-pressed=true],.product-sheet .widget-scroll .widget-pack-option.selected{border-color:#58d5ef;background:linear-gradient(110deg,#16465d,#0d2e42);box-shadow:inset 3px 0 #58d5ef}
+.product-sheet .widget-scroll .variant[aria-pressed=true]:after{display:none}
+.product-sheet .widget-scroll .widget-pack-option{min-height:72px;padding:10px 12px;align-items:center}
+.product-sheet .widget-scroll .widget-pack-option .pack-select{display:flex;align-items:center;gap:12px;padding:0 108px 0 0;min-height:48px;width:100%;text-align:left}
+.product-sheet .widget-scroll .widget-pack-option .widget-pack-text{min-width:0}
+.product-sheet .widget-scroll .widget-pack-text>span{font-size:14px!important;font-weight:650!important;line-height:1.25!important;display:block;overflow-wrap:anywhere}
+.product-sheet .widget-scroll .widget-pack-text strong{font-size:14px!important;margin-top:4px!important;color:#8de5fb!important;display:block;font-variant-numeric:tabular-nums}
+.product-sheet .widget-scroll .widget-pack-art{flex:none;width:42px;height:42px;min-width:42px;border-radius:10px}
+.product-sheet .widget-scroll img.widget-pack-art{object-fit:contain}
+.product-sheet .widget-scroll .widget-pack-option .pack-controls{position:absolute;left:auto;right:10px;top:50%;bottom:auto;transform:translateY(-50%);display:flex;flex-direction:row;gap:5px}
+.product-sheet .widget-scroll .widget-pack-option .pack-controls button{width:34px;min-width:34px;height:38px;min-height:38px;border-radius:10px;border:1px solid #39728e;background:#13384e;box-shadow:none;font-size:20px}
+.product-sheet .widget-scroll .widget-pack-option .pack-controls .pack-count{min-width:18px;font-size:13px;display:block;color:#e8f5ff}
+.product-sheet .widget-scroll .widget-pack-option .pack-controls button.pack-plus{background:#17628b;border-color:#4db8dd}
+.product-sheet .widget-tabs,.product-sheet .v10-core-tabs{gap:6px;margin-block:10px}
+.product-sheet .widget-tabs button,.product-sheet .v10-core-tabs button{min-height:40px;border-radius:11px;background:#0d283b;border:1px solid #2d5269;color:#b5cdda}
+.product-sheet .widget-tabs button[aria-pressed=true],.product-sheet .v10-core-tabs button[aria-pressed=true]{background:#174b65;border-color:#54cae8;color:#fff;box-shadow:none}
+.product-sheet .widget-footer{gap:12px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:#071b2a;border-top:1px solid #2c5167;box-shadow:0 -6px 18px #03101ba0}
+.product-sheet .widget-footer .action{border-radius:12px;min-height:46px;font-weight:700}
+.product-sheet .widget-footer .action:not(:disabled){background:linear-gradient(120deg,#22bedc,#126fbd)!important;border:1px solid #5cd5ec!important;box-shadow:inset 0 1px #ffffff30!important;color:#fff}
+.product-sheet .checkout-total{font-size:17px}
+.product-sheet .widget-scroll .price-summary{display:none}
+.product-sheet .widget-scroll[data-widget-product=telegram_stars] .price-summary{display:flex}
+.product-sheet button:focus-visible{outline:2px solid #8aeaff;outline-offset:3px}
+.product-sheet button:active:not(:disabled){transform:scale(.985)}
+.product-sheet .market-guide{background:#0c2334;border-color:#2c4e65;font-size:13px}
+.ui-sound{display:inline-grid;place-items:center;flex:none;min-width:34px;min-height:34px;padding:0;border:1px solid #315970;border-radius:50%;color:#93e8f9;background:#0b263a;font-size:17px}
+.ui-sound[aria-pressed=false]{color:#8095a4}
+.intro .intro-content{animation:arslan-fast-intro .32s ease-out both!important}
+.intro .intro-emblem{width:112px!important;height:112px!important;object-fit:contain}
+.intro .intro-game,.intro .intro-subtitle{display:none}
+.intro .intro-brand{margin-top:12px;font-size:22px;letter-spacing:.08em}
+@keyframes arslan-fast-intro{from{opacity:0;transform:translateY(5px) scale(.97)}to{opacity:1;transform:none}}
+@media(max-width:355px){
+.product-sheet .widget-scroll .widget-pack-art{width:32px;height:38px;min-width:32px}
+.product-sheet .widget-scroll .widget-pack-option .pack-select{gap:7px;padding-right:96px}
+.product-sheet .widget-scroll .widget-pack-option .pack-controls{right:7px;gap:3px}
+.product-sheet .widget-scroll .widget-pack-option .pack-controls button{width:32px;min-width:32px}
+.product-sheet .widget-scroll .widget-pack-text>span,.product-sheet .widget-scroll .widget-pack-text strong{font-size:12px!important}
+.product-sheet .checkout-total{font-size:14px}
+}
+@media(prefers-reduced-motion:reduce){.intro,.intro .intro-content,.product-sheet .variant{animation:none!important;transition:none!important}}
