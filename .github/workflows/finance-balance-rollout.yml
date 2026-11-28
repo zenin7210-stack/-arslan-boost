@@ -1,4 +1,4 @@
-name: Finance opening balance rollout
+name: Finance equal balance shares rollout
 on:
   push:
     branches: [finance-deploy-preflight]
@@ -41,6 +41,7 @@ jobs:
           python releases/finance-v4/group-menu.py finance
           python releases/finance-v4/finance-v5.py finance
           python releases/finance-v4/balance-snapshot.py finance
+          patch --batch --fuzz=0 -d finance -p1 < releases/finance-v4/balance-shares.patch
           node --test finance/test.mjs
           mkdir -p /tmp/finance-listener
           cp main.py /tmp/finance-listener/main.py
@@ -109,7 +110,7 @@ jobs:
           base='/workers/scripts/'+cfg['name']
           latest=max(get(base+'/deployments')['deployments'],key=lambda d:d['created_on'])
           versions=latest['versions']
-          assert len(versions)==1 and versions[0]['percentage']==100 and versions[0]['version_id']=='d03f8626-563c-44c1-803f-da01112090f8','Production version changed: refusing deployment'
+          assert len(versions)==1 and versions[0]['percentage']==100 and versions[0]['version_id']=='df155f24-9332-4cc9-b359-2ed3deae7cb3','Production version changed: refusing deployment'
           bindings=get(base+'/settings')['bindings']
           names={b['name'] for b in bindings}
           assert {'BOT_TOKEN','ADMIN_ID','DB','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'}<=names
@@ -152,7 +153,7 @@ jobs:
           req=urllib.request.Request('https://api.cloudflare.com/client/v4/accounts/'+c['account_id']+'/workers/scripts/'+c['name']+'/deployments',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
           with urllib.request.urlopen(req,timeout=20) as r: j=json.load(r)
           d=max(j['result']['deployments'],key=lambda x:x['created_on'])
-          assert d['versions']==[{'version_id':'d03f8626-563c-44c1-803f-da01112090f8','percentage':100}] or (len(d['versions'])==1 and d['versions'][0]['version_id']=='d03f8626-563c-44c1-803f-da01112090f8' and d['versions'][0]['percentage']==100)
+          assert d['versions']==[{'version_id':'df155f24-9332-4cc9-b359-2ed3deae7cb3','percentage':100}] or (len(d['versions'])==1 and d['versions'][0]['version_id']=='df155f24-9332-4cc9-b359-2ed3deae7cb3' and d['versions'][0]['percentage']==100)
           PY
           npx --yes wrangler@4.166.0 deploy --config wrangler.production.jsonc --keep-vars >/tmp/finance-deploy.log 2>&1
           grep -E 'Current Version ID:|Deployed arslan-boost-bot' /tmp/finance-deploy.log
@@ -216,5 +217,25 @@ jobs:
           active=max(result['result']['deployments'],key=lambda d:d['created_on'])['versions']
           assert len(active)==1 and active[0]['version_id']==os.environ['DEPLOYED_VERSION'] and active[0]['percentage']==100,'Another version is active; aborting rollback'
           PYVERIFY
-          npx --yes wrangler@4.166.0 rollback d03f8626-563c-44c1-803f-da01112090f8 --config wrangler.production.jsonc --message "Restore verified market after finance rollout failure" >/tmp/finance-rollback.log 2>&1
+          npx --yes wrangler@4.166.0 rollback df155f24-9332-4cc9-b359-2ed3deae7cb3 --config wrangler.production.jsonc --message "Restore verified market after finance rollout failure" >/tmp/finance-rollback.log 2>&1
           echo 'Rolled back to previously verified production version'
+
+      - name: Confirm the existing pinned dashboard was updated
+        working-directory: release
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python - <<'PYVERIFY'
+          import json, os, time, urllib.request
+          cfg=json.load(open('wrangler.production.jsonc'))
+          db=next(item for item in cfg['d1_databases'] if item['binding']=='FINANCE_DB')
+          url='https://api.cloudflare.com/client/v4/accounts/'+cfg['account_id']+'/d1/database/'+db['database_id']+'/query'
+          sql="SELECT EXISTS(SELECT 1 FROM fin_config l JOIN fin_config c ON c.k='channel' AND l.v=('split-v1:' || c.v) WHERE l.k='balance_layout') AS ready"
+          request=urllib.request.Request(url,data=json.dumps({'sql':sql}).encode(),headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'})
+          for attempt in range(30):
+              with urllib.request.urlopen(request,timeout=15) as response: data=json.load(response)
+              if data['success'] and data['result'][0]['results'][0]['ready']: break
+              time.sleep(6)
+          else: raise SystemExit('Pinned dashboard update not confirmed')
+          print('PASS: existing pinned message updated with equal shares.')
+          PYVERIFY
