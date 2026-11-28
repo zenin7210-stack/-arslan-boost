@@ -1,10 +1,11 @@
-name: Finance automatic partners and Gold price rollout
+name: ARSLAN product UI rollout
 on:
   push:
     branches: [finance-deploy-preflight]
     paths: ['.github/workflows/finance-balance-rollout.yml']
 permissions:
   contents: read
+  statuses: write
 concurrency:
   group: arslan-boost-production
   cancel-in-progress: false
@@ -14,6 +15,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Link product UI verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api repos/${{ github.repository }}/statuses/${{ github.sha }} -f state=pending -f context=product-ui -f target_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -117,7 +122,7 @@ jobs:
           base='/workers/scripts/'+cfg['name']
           latest=max(get(base+'/deployments')['deployments'],key=lambda d:d['created_on'])
           versions=latest['versions']
-          assert len(versions)==1 and versions[0]['percentage']==100 and versions[0]['version_id']=='5d8015be-5eab-458f-bff4-0d1b0af360ad','Production version changed: refusing deployment'
+          assert len(versions)==1 and versions[0]['percentage']==100 and versions[0]['version_id']=='efb4d1a7-6b7a-42a4-b953-d58244b701af','Production version changed: refusing deployment'
           bindings=get(base+'/settings')['bindings']
           names={b['name'] for b in bindings}
           assert {'BOT_TOKEN','ADMIN_ID','DB','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'}<=names
@@ -136,19 +141,19 @@ jobs:
               live=subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',origin+'/'+f+'?finance-check=1'])
               assert live==pathlib.Path('public',f).read_bytes(),'Live storefront mismatch: '+f
           live_catalog=subprocess.check_output(['curl','-fsSL','--max-time','25',origin+'/assets/donat/catalog.json?before-price=1'])
-          assert json.loads(live_catalog)==json.load(open('/tmp/old-catalog.json'))
-          new_catalog=json.load(open('public/assets/donat/catalog.json'))
-          old_catalog=json.loads(live_catalog)
-          for item in new_catalog['items']:
-              old=next(x for x in old_catalog['items'] if x['id']==item['id'])
-              if item['id']=='gold_rinok':
-                  assert all(o[2]==int(o[0])*130 for o in item['options'])
-                  old['options']=item['options']
-          assert new_catalog==old_catalog
+          assert json.loads(live_catalog)==json.load(open('public/assets/donat/catalog.json'))
           health=json.loads(subprocess.check_output(['curl','-fsSL','--max-time','20',origin+'/healthz']))
           assert health['ok'] and health['paymentsEnabled']
           print('PASS: exact known live version, all six static assets, healthy payments, isolated D1.')
           PY
+      - name: Apply product UI and verify mobile behavior
+        run: |
+          python releases/product-ui/apply.py
+          node --check release/public/assets/interactions.js
+          node --check release/public/app.js
+          python -m pip install -q playwright
+          python -m playwright install --with-deps chromium
+          python releases/product-ui/check.py
       - name: Compile Worker without deploying
         working-directory: release
         env:
@@ -170,7 +175,7 @@ jobs:
           req=urllib.request.Request('https://api.cloudflare.com/client/v4/accounts/'+c['account_id']+'/workers/scripts/'+c['name']+'/deployments',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
           with urllib.request.urlopen(req,timeout=20) as r: j=json.load(r)
           d=max(j['result']['deployments'],key=lambda x:x['created_on'])
-          assert d['versions']==[{'version_id':'5d8015be-5eab-458f-bff4-0d1b0af360ad','percentage':100}] or (len(d['versions'])==1 and d['versions'][0]['version_id']=='5d8015be-5eab-458f-bff4-0d1b0af360ad' and d['versions'][0]['percentage']==100)
+          assert d['versions']==[{'version_id':'efb4d1a7-6b7a-42a4-b953-d58244b701af','percentage':100}] or (len(d['versions'])==1 and d['versions'][0]['version_id']=='efb4d1a7-6b7a-42a4-b953-d58244b701af' and d['versions'][0]['percentage']==100)
           PY
           npx --yes wrangler@4.166.0 deploy --config wrangler.production.jsonc --keep-vars >/tmp/finance-deploy.log 2>&1
           grep -E 'Current Version ID:|Deployed arslan-boost-bot' /tmp/finance-deploy.log
@@ -193,7 +198,7 @@ jobs:
               try:
                   h=json.loads(fetch('healthz'))
                   assert h['ok'] and h['paymentsEnabled']
-                  for f in ['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js','assets/p2p.css']:
+                  for f in ['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js','assets/p2p.css','assets/products.css','assets/interactions.js']:
                       assert fetch(f+'?finance-verify='+str(i))==pathlib.Path('public',f).read_bytes()
                   actual=json.loads(fetch('assets/donat/catalog.json?price-verify='+str(i)))
                   assert actual==json.load(open('public/assets/donat/catalog.json'))
@@ -236,7 +241,7 @@ jobs:
           active=max(result['result']['deployments'],key=lambda d:d['created_on'])['versions']
           assert len(active)==1 and active[0]['version_id']==os.environ['DEPLOYED_VERSION'] and active[0]['percentage']==100,'Another version is active; aborting rollback'
           PYVERIFY
-          npx --yes wrangler@4.166.0 rollback 5d8015be-5eab-458f-bff4-0d1b0af360ad --config wrangler.production.jsonc --message "Restore verified market after finance rollout failure" >/tmp/finance-rollback.log 2>&1
+          npx --yes wrangler@4.166.0 rollback efb4d1a7-6b7a-42a4-b953-d58244b701af --config wrangler.production.jsonc --message "Restore verified market after finance rollout failure" >/tmp/finance-rollback.log 2>&1
           echo 'Rolled back to previously verified production version'
 
       - name: Confirm the existing pinned dashboard was updated
