@@ -1,4 +1,4 @@
-name: Finance photo cards rollout
+name: Finance automatic partners and Gold price rollout
 on:
   push:
     branches: [finance-deploy-preflight]
@@ -45,6 +45,7 @@ jobs:
           python releases/finance-v4/cards/font.py finance/card-font.mjs
           cp releases/finance-v4/cards/photo.mjs finance/
           patch --batch --fuzz=0 -d finance -p1 < releases/finance-v4/cards/integrate.patch
+          patch --batch --fuzz=0 -d finance -p1 < releases/finance-v4/auto-partners.patch
           node --test finance/test.mjs
           mkdir -p /tmp/finance-listener
           cp main.py /tmp/finance-listener/main.py
@@ -70,6 +71,8 @@ jobs:
         run: |
           set -euo pipefail
           cp release/src/worker.mjs /tmp/market-worker-original.mjs
+          cp release/public/assets/donat/catalog.json /tmp/old-catalog.json
+          patch --batch --fuzz=0 -d release -p1 < releases/finance-v4/gold130.patch
           python finance/patch-boost.py release
           cp finance/card-font.mjs finance/photo.mjs release/src/
           python - <<'PY'
@@ -114,7 +117,7 @@ jobs:
           base='/workers/scripts/'+cfg['name']
           latest=max(get(base+'/deployments')['deployments'],key=lambda d:d['created_on'])
           versions=latest['versions']
-          assert len(versions)==1 and versions[0]['percentage']==100 and versions[0]['version_id']=='4bcf9cb8-5fd4-4cac-b98a-bdf9b15f3caa','Production version changed: refusing deployment'
+          assert len(versions)==1 and versions[0]['percentage']==100 and versions[0]['version_id']=='5d8015be-5eab-458f-bff4-0d1b0af360ad','Production version changed: refusing deployment'
           bindings=get(base+'/settings')['bindings']
           names={b['name'] for b in bindings}
           assert {'BOT_TOKEN','ADMIN_ID','DB','P2P_HUMO_SECRET','P2P_CARDXABAR_SECRET'}<=names
@@ -132,6 +135,16 @@ jobs:
           for f in paths:
               live=subprocess.check_output(['curl','-fsSL','--retry','2','--max-time','25',origin+'/'+f+'?finance-check=1'])
               assert live==pathlib.Path('public',f).read_bytes(),'Live storefront mismatch: '+f
+          live_catalog=subprocess.check_output(['curl','-fsSL','--max-time','25',origin+'/assets/donat/catalog.json?before-price=1'])
+          assert json.loads(live_catalog)==json.load(open('/tmp/old-catalog.json'))
+          new_catalog=json.load(open('public/assets/donat/catalog.json'))
+          old_catalog=json.loads(live_catalog)
+          for item in new_catalog['items']:
+              old=next(x for x in old_catalog['items'] if x['id']==item['id'])
+              if item['id']=='gold_rinok':
+                  assert all(o[2]==int(o[0])*130 for o in item['options'])
+                  old['options']=item['options']
+          assert new_catalog==old_catalog
           health=json.loads(subprocess.check_output(['curl','-fsSL','--max-time','20',origin+'/healthz']))
           assert health['ok'] and health['paymentsEnabled']
           print('PASS: exact known live version, all six static assets, healthy payments, isolated D1.')
@@ -157,7 +170,7 @@ jobs:
           req=urllib.request.Request('https://api.cloudflare.com/client/v4/accounts/'+c['account_id']+'/workers/scripts/'+c['name']+'/deployments',headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
           with urllib.request.urlopen(req,timeout=20) as r: j=json.load(r)
           d=max(j['result']['deployments'],key=lambda x:x['created_on'])
-          assert d['versions']==[{'version_id':'4bcf9cb8-5fd4-4cac-b98a-bdf9b15f3caa','percentage':100}] or (len(d['versions'])==1 and d['versions'][0]['version_id']=='4bcf9cb8-5fd4-4cac-b98a-bdf9b15f3caa' and d['versions'][0]['percentage']==100)
+          assert d['versions']==[{'version_id':'5d8015be-5eab-458f-bff4-0d1b0af360ad','percentage':100}] or (len(d['versions'])==1 and d['versions'][0]['version_id']=='5d8015be-5eab-458f-bff4-0d1b0af360ad' and d['versions'][0]['percentage']==100)
           PY
           npx --yes wrangler@4.166.0 deploy --config wrangler.production.jsonc --keep-vars >/tmp/finance-deploy.log 2>&1
           grep -E 'Current Version ID:|Deployed arslan-boost-bot' /tmp/finance-deploy.log
@@ -182,6 +195,8 @@ jobs:
                   assert h['ok'] and h['paymentsEnabled']
                   for f in ['index.html','app.js','assets/donat/shop.js','assets/donat/shop.css','assets/p2p.js','assets/p2p.css']:
                       assert fetch(f+'?finance-verify='+str(i))==pathlib.Path('public',f).read_bytes()
+                  actual=json.loads(fetch('assets/donat/catalog.json?price-verify='+str(i)))
+                  assert actual==json.load(open('public/assets/donat/catalog.json'))
                   p=subprocess.run(['curl','-sS','--max-time','15','-X','POST','-w','\n%{http_code}',origin+'/finance/relay','-d','{}'],capture_output=True,text=True,check=True)
                   body,code=p.stdout.rsplit('\n',1)
                   assert code=='403' and json.loads(body)['error']=='forbidden'
@@ -221,7 +236,7 @@ jobs:
           active=max(result['result']['deployments'],key=lambda d:d['created_on'])['versions']
           assert len(active)==1 and active[0]['version_id']==os.environ['DEPLOYED_VERSION'] and active[0]['percentage']==100,'Another version is active; aborting rollback'
           PYVERIFY
-          npx --yes wrangler@4.166.0 rollback 4bcf9cb8-5fd4-4cac-b98a-bdf9b15f3caa --config wrangler.production.jsonc --message "Restore verified market after finance rollout failure" >/tmp/finance-rollback.log 2>&1
+          npx --yes wrangler@4.166.0 rollback 5d8015be-5eab-458f-bff4-0d1b0af360ad --config wrangler.production.jsonc --message "Restore verified market after finance rollout failure" >/tmp/finance-rollback.log 2>&1
           echo 'Rolled back to previously verified production version'
 
       - name: Confirm the existing pinned dashboard was updated
@@ -234,7 +249,7 @@ jobs:
           cfg=json.load(open('wrangler.production.jsonc'))
           db=next(item for item in cfg['d1_databases'] if item['binding']=='FINANCE_DB')
           url='https://api.cloudflare.com/client/v4/accounts/'+cfg['account_id']+'/d1/database/'+db['database_id']+'/query'
-          sql="SELECT EXISTS(SELECT 1 FROM fin_config l JOIN fin_config c ON c.k='channel' AND l.v=('photo-v1:' || c.v) WHERE l.k='balance_layout') AS ready"
+          sql="SELECT EXISTS(SELECT 1 FROM fin_config l JOIN fin_config c ON c.k='channel' AND l.v=('partner-v1:' || c.v) WHERE l.k='balance_layout') AS ready"
           request=urllib.request.Request(url,data=json.dumps({'sql':sql}).encode(),headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'})
           for attempt in range(30):
               with urllib.request.urlopen(request,timeout=15) as response: data=json.load(response)
