@@ -1,0 +1,273 @@
+--- a/public/assets/donat/catalog.json
++++ b/public/assets/donat/catalog.json
+@@ -6,3 +6,3 @@
+   "items": [
+-    {"id":"gold_rinok","title":"Gold (Rinok)","subtitle":"Skin orqali Gold","group":"core","image":"assets/donat/gold.webp","kind":"quantity","min":100,"max":10000,"unit":"Gold","step":100,"input":"optional","badge":"Eng ommabop","options":[["100","100 Gold",11990],["200","200 Gold",23990],["500","500 Gold",59990],["1000","1 000 Gold",119990],["3000","3 000 Gold",359990],["5000","5 000 Gold",599990],["10000","10 000 Gold",1149990]]},
++    {"id":"gold_rinok","title":"Gold (Rinok)","subtitle":"Skin orqali Gold","group":"core","image":"assets/donat/gold.webp","kind":"quantity","min":100,"max":10000,"unit":"Gold","step":100,"input":"optional","badge":"Eng ommabop","options":[["100","100 Gold",13000],["200","200 Gold",26000],["500","500 Gold",65000],["1000","1 000 Gold",130000],["3000","3 000 Gold",390000],["5000","5 000 Gold",650000],["10000","10 000 Gold",1300000]]},
+     {"id":"gold_id","title":"Gold (ID)","subtitle":"ID orqali Gold","group":"core","image":"assets/donat/id.webp","kind":"options","max_packs":99,"unit":"Gold","input":"game_id","badge":"Tez va qulay","options":[["100","100 Gold",24990],["200","200 Gold",47990],["300","300 Gold",69990],["500","500 Gold",95990],["1000","1 000 Gold",159990],["3000","3 000 Gold",369990]]},
+--- a/tests/p2p.test.mjs
++++ b/tests/p2p.test.mjs
+@@ -1393,3 +1393,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...data,requestId:'fixed-first'});
+@@ -1397,6 +1397,6 @@
+   assert.deepEqual([a.status,b.status],[200,200]);
+-  assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices ORDER BY user_id').all().map(x=>x.unique_amount),[11990,12090]);
++  assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices ORDER BY user_id').all().map(x=>x.unique_amount),[13000,13100]);
+   assert.equal((await sys.api(2,`invoice/${b.data.invoiceId}/status`,null,'GET')).data.verificationMode,'automatic');
+   const notice=await sys.relay({sender:'BankDemo',eventId:'sms:base-without-button',
+-    text:notification(11990,'BANKBASEWITHOUT')});
++    text:notification(13000,'BANKBASEWITHOUT')});
+   assert.equal(notice.status,200);
+@@ -1424,5 +1424,5 @@
+ 
+-test('Gold through market 100 checkout at 11990 creates actual linked card invoice',async()=>{
++test('Gold through market 100 checkout at 13000 creates actual linked card invoice',async()=>{
+   const system=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,
+     paymentMethod:'uzcard',requestId:'user-screenshot-gold-market-100'};
+@@ -1430,7 +1430,7 @@
+   assert.equal(created.status,200,JSON.stringify(created.data));
+-  assert.equal(created.data.amount,11990);
++  assert.equal(created.data.amount,13000);
+   assert.ok(created.data.invoiceId);
+   const invoice=system.db.prepare('SELECT * FROM invoices WHERE id=?').get(created.data.invoiceId);
+-  assert.equal(invoice.requested_amount,11990);
+-  assert.equal(invoice.unique_amount,11990);
++  assert.equal(invoice.requested_amount,13000);
++  assert.equal(invoice.unique_amount,13000);
+   assert.equal((await system.api(1,'invoice/'+invoice.id+'/status',null,'GET')).data.status,'pending');
+@@ -1449,3 +1449,3 @@
+   const result=await system.api(1,'donat/create',{
+-    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++    product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,
+     paymentMethod:'uzcard',requestId:'gold-after-old-stars-cancel'
+@@ -1453,3 +1453,3 @@
+   assert.equal(result.status,200,JSON.stringify(result.data));
+-  assert.equal(result.data.amount,11990);
++  assert.equal(result.data.amount,13000);
+   assert.ok(result.data.invoiceId);
+@@ -1469,3 +1469,3 @@
+   const another=await system.api(1,'donat/create',{
+-    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++    product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,
+     paymentMethod:'uzcard',requestId:'gold-should-not-be-blocked'
+@@ -1493,3 +1493,3 @@
+   const created=await system.api(1,'donat/create',{
+-    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++    product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,
+     paymentMethod:'uzcard',requestId:'new-purchase-despite-paid'
+@@ -1502,3 +1502,3 @@
+   const system=app();
+-  const base={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const base={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const first=await system.api(1,'donat/create',{...base,requestId:'first-bank-intent'});
+@@ -1510,3 +1510,3 @@
+   const oldInvoice=system.db.prepare('SELECT * FROM invoices WHERE id=?').get(first.data.invoiceId);
+-  assert.ok(oldInvoice.unique_amount>=11990);
++  assert.ok(oldInvoice.unique_amount>=13000);
+   const cancel=await system.api(1,'invoice/'+first.data.invoiceId+'/cancel',{});
+@@ -1521,3 +1521,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const first=await sys.api(1,'donat/create',{...data,requestId:'reuse20-a'});
+@@ -1530,3 +1530,3 @@
+   const invoice=sys.db.prepare('SELECT * FROM invoices WHERE id=?').get(second.data.invoiceId);
+-  assert.equal(invoice.unique_amount,11990);
++  assert.equal(invoice.unique_amount,13000);
+   const checked=(await sys.api(2,'invoice/'+invoice.id+'/status',null,'GET')).data;
+@@ -1535,3 +1535,3 @@
+   const late=await sys.relay({sender:'BankDemo',eventId:'sms:reused200',
+-    text:notification(11990,'BANKREUSED200',new Date((invoice.created_at-950)*1000).toISOString())});
++    text:notification(13000,'BANKREUSED200',new Date((invoice.created_at-950)*1000).toISOString())});
+   assert.equal(late.status,200);
+@@ -1545,3 +1545,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const first=await sys.api(1,'donat/create',{...data,requestId:'v7-time-first-order'});
+@@ -1557,3 +1557,3 @@
+   const time=new Date(Date.now()-1500).toISOString();
+-  const received=await sys.relay({sender:'BankDemo',eventId:'sms:v7fresh',text:notification(11990,'BANKV7FRESH',time)});
++  const received=await sys.relay({sender:'BankDemo',eventId:'sms:v7fresh',text:notification(13000,'BANKV7FRESH',time)});
+   assert.equal(received.status,200,JSON.stringify(received.data));
+@@ -1567,3 +1567,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const placed=await sys.api(1,'donat/create',{...data,requestId:'checked20-a'});
+@@ -1591,3 +1591,3 @@
+   const sys=app();
+-  const form={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const form={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...form,requestId:'link-first-acc'});
+@@ -1596,3 +1596,3 @@
+   // Simulate a historical V8 collision. V9 never issues such duplicate amounts.
+-  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
++  sys.db.prepare("UPDATE invoices SET unique_amount=13000,base_amount=13000 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(1,`invoice/${a.data.invoiceId}/check`,{});
+@@ -1601,3 +1601,3 @@
+   const evt=await sys.relay({sender:'BankDemo',eventId:'sms:unlink-01',
+-    text:notification(11990,'BANKMANUAL123')});
++    text:notification(13000,'BANKMANUAL123')});
+   assert.equal(evt.status,200);assert.equal(evt.data.matched,false);
+@@ -1624,6 +1624,6 @@
+   const sys=app();
+-  const form={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const form={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...form,requestId:'late-first-acc'});
+   const b=await sys.api(2,'donat/create',{...form,requestId:'late-second-acc'});
+-  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
++  sys.db.prepare("UPDATE invoices SET unique_amount=13000,base_amount=13000 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(1,`invoice/${a.data.invoiceId}/check`,{});
+@@ -1632,3 +1632,3 @@
+   const incoming=await sys.relay({sender:'BankDemo',eventId:'sms:lateclaim99',
+-    text:notification(11990,'BANKLATE123')});
++    text:notification(13000,'BANKLATE123')});
+   assert.equal(incoming.data.matched,false);
+@@ -1655,6 +1655,6 @@
+   const sys=app();
+-  const f={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const f={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...f,requestId:'reject-first-acc'});
+   const b=await sys.api(2,'donat/create',{...f,requestId:'reject-second-acc'});
+-  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
++  sys.db.prepare("UPDATE invoices SET unique_amount=13000,base_amount=13000 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(2,`invoice/${b.data.invoiceId}/check`,{});
+@@ -1677,3 +1677,3 @@
+   ])});
+-  const f={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const f={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...f,requestId:'separate-card-a'});
+@@ -1685,3 +1685,3 @@
+   assert.equal((await sys.api(2,`invoice/${b.data.invoiceId}/status`,null,'GET')).data.verificationMode,'automatic');
+-  const amount=11990, stamp=new Date().toISOString();
++  const amount=13000, stamp=new Date().toISOString();
+   const makeEvent=(card,ref)=>`Popolnenie: ${amount}.00 UZS\nCard: ***${card}\nRRN: ${ref}\nDate: ${stamp}`;
+@@ -1697,3 +1697,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,
+     paymentMethod:'uzcard',requestId:'ten-minute-test-a'};
+@@ -1707,3 +1707,3 @@
+   assert.equal(b.status,200,JSON.stringify(b.data));
+-  assert.equal(sys.db.prepare('SELECT unique_amount FROM invoices WHERE id=?').get(b.data.invoiceId).unique_amount,12090);
++  assert.equal(sys.db.prepare('SELECT unique_amount FROM invoices WHERE id=?').get(b.data.invoiceId).unique_amount,13100);
+   const state=(await sys.api(2,`invoice/${b.data.invoiceId}/status`,null,'GET')).data;
+@@ -1933,3 +1933,3 @@
+   const sys=app();
+-  const product={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const product={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...product,requestId:'bank-admin-a'});
+@@ -1938,3 +1938,3 @@
+   // Simulate a historical V8 collision. V9 never issues such duplicate amounts.
+-  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
++  sys.db.prepare("UPDATE invoices SET unique_amount=13000,base_amount=13000 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(2,`invoice/${b.data.invoiceId}/check`,{});await sys.drain();
+@@ -1961,8 +1961,8 @@
+   const sys=app();
+-  const f={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const f={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...f,requestId:'bank-button-a'});
+   const b=await sys.api(2,'donat/create',{...f,requestId:'bank-button-b'});
+-  sys.db.prepare("UPDATE invoices SET unique_amount=11990,base_amount=11990 WHERE id=?").run(b.data.invoiceId);
++  sys.db.prepare("UPDATE invoices SET unique_amount=13000,base_amount=13000 WHERE id=?").run(b.data.invoiceId);
+   await sys.api(1,`invoice/${a.data.invoiceId}/check`,{});await sys.drain();
+-  const receipt=await sys.relay({sender:'BankDemo',eventId:'sms:button123',text:notification(11990,'BANKBUTTON123')});
++  const receipt=await sys.relay({sender:'BankDemo',eventId:'sms:button123',text:notification(13000,'BANKBUTTON123')});
+   assert.equal(receipt.data.matched,false);
+@@ -2010,3 +2010,3 @@
+   const sys=app({P2P_USERS:'1 2 3 4'});
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const requests=[];
+@@ -2016,3 +2016,3 @@
+   assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices ORDER BY user_id').all().map(r=>r.unique_amount),
+-    [11990,12090,11890]);
++    [13000,13100,12900]);
+   const fourth=await sys.api(4,'donat/create',{...data,requestId:'v9-fourth'});
+@@ -2025,3 +2025,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const res=await sys.api(1,'donat/create',{...data,requestId:'v9-time-60'});
+@@ -2043,3 +2043,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const res=await sys.api(1,'donat/create',{...data,requestId:'v9-last-30'});
+@@ -2071,3 +2071,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const a=await sys.api(1,'donat/create',{...data,requestId:'v9-profit-base'});
+@@ -2077,3 +2077,3 @@
+   assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices ORDER BY user_id').all().map(x=>x.unique_amount),
+-    [11990,12090,11890]);
++    [13000,13100,12900]);
+   const partnerId=40;
+@@ -2081,3 +2081,3 @@
+   for(const buyer of [2,3]) sys.db.prepare("INSERT INTO partner_buyers(buyer,partner,joined_at) VALUES(?,?,'2024-01-01T00:00:00Z')").run(buyer,partnerId);
+-  for(const [val,ref] of [[12090,'BANKV9PLUS100'],[11890,'BANKV9MINUS100']]) {
++  for(const [val,ref] of [[13100,'BANKV9PLUS100'],[12900,'BANKV9MINUS100']]) {
+     const res=await sys.relay({sender:'BankDemo',eventId:'sms:'+ref,text:notification(val,ref)});
+@@ -2089,3 +2089,3 @@
+   assert.deepEqual(sys.db.prepare('SELECT amount FROM payments WHERE user_id IN (2,3) ORDER BY user_id').all().map(x=>x.amount),
+-    [11990,11990]);
++    [13000,13000]);
+   const store=new Store(sys.env.DB);
+@@ -2094,5 +2094,5 @@
+   const earns=sys.db.prepare('SELECT commission FROM partner_earnings ORDER BY order_id').all().map(x=>x.commission);
+-  assert.deepEqual(earns,[209,189]);
++  assert.deepEqual(earns,[310,290]);
+   assert.equal(sys.db.prepare('SELECT COALESCE(SUM(p2p_balance),0) AS total FROM accounts').get().total,0);
+-  const dup=await sys.relay({sender:'BankDemo',eventId:'sms:BANKV9PLUS100',text:notification(12090,'BANKV9PLUS100')});
++  const dup=await sys.relay({sender:'BankDemo',eventId:'sms:BANKV9PLUS100',text:notification(13100,'BANKV9PLUS100')});
+   assert.equal(dup.data.duplicate,true);
+@@ -2103,3 +2103,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const results=await Promise.all([1,2,3].map(async id=>sys.api(id,'donat/create',{
+@@ -2108,3 +2108,3 @@
+   assert.deepEqual(sys.db.prepare('SELECT unique_amount FROM invoices').all().map(x=>x.unique_amount).sort((a,b)=>a-b),
+-    [11890,11990,12090]);
++    [12900,13000,13100]);
+   const count=sys.db.prepare("SELECT COUNT(DISTINCT card_id||'/'||unique_amount) AS n FROM invoices").get();
+@@ -2115,3 +2115,3 @@
+   const sys=app();
+-  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,paymentMethod:'uzcard'};
++  const data={product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,paymentMethod:'uzcard'};
+   const created=await sys.api(1,'donat/create',{...data,requestId:'v9-claim-and-expire'});
+@@ -2129,3 +2129,3 @@
+   assert.equal(next.status,200,JSON.stringify(next.data));
+-  assert.equal(sys.db.prepare('SELECT unique_amount FROM invoices WHERE id=?').get(next.data.invoiceId).unique_amount,12090);
++  assert.equal(sys.db.prepare('SELECT unique_amount FROM invoices WHERE id=?').get(next.data.invoiceId).unique_amount,13100);
+ });
+@@ -2135,3 +2135,3 @@
+   const r=await sys.api(1,'donat/create',{
+-    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++    product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,
+     paymentMethod:'uzcard',requestId:'v9-after-two-min'});
+@@ -2152,3 +2152,3 @@
+   const placed=await sys.api(1,'donat/create',{
+-    product:'gold_rinok',quantity:100,detail:'',expectedAmount:11990,
++    product:'gold_rinok',quantity:100,detail:'',expectedAmount:13000,
+     paymentMethod:'uzcard',requestId:'v8-legacy-preserved'});
+@@ -2291,5 +2291,5 @@
+   await message('100 gold nechpul',replyToBot());
+-  assert.equal(last(),'100 Gold — bozor orqali 11 990 so‘m, ID orqali 24 990 so‘m.');
++  assert.equal(last(),'100 Gold — bozor orqali 13 000 so‘m, ID orqali 24 990 so‘m.');
+   await message('ID orqali?',replyToBot());assert.equal(last(),'100 Gold — ID orqali 24 990 so‘m.');
+-  await message('/ai Сколько стоит 250 голды через рынок?');assert.equal(last(),'250 Gold — через рынок 29 990 сум.');
++  await message('/ai Сколько стоит 250 голды через рынок?');assert.equal(last(),'250 Gold — через рынок 32 500 сум.');
+   await message('/ai Gold Pass nechpul');assert.equal(last(),'Gold Pass — 108 990 so‘m');
+@@ -2349,3 +2349,3 @@
+   await send('/ai Какая версия гпт у тебя?');assert.equal(texts.at(-1),'Основная модель чата — GPT-6.2 Sol.');
+-  await send('/ai 100 gold nechpul');assert.match(texts.at(-1),/11 990/);assert.equal(calls.length,0);
++  await send('/ai 100 gold nechpul');assert.match(texts.at(-1),/13 000/);assert.equal(calls.length,0);
+   await send('/ai Shaxmatni qanday o‘ynayman?');
