@@ -1,0 +1,127 @@
+--- a/finance.mjs
++++ b/finance.mjs
+@@ -5,3 +5,3 @@
+ function money(s){const m=s.trim().match(/^(\d{1,3}(?:[. \u00a0\u202f]\d{3})+|\d+),([0-9]{2})$/);if(!m)return null;const n=Number(m[1].replace(/\D/g,''))*100+Number(m[2]);return Number.isSafeInteger(n)?n:null;}
+-export function parseHumo(raw,card){if(typeof raw!=='string')return null;const s=norm(raw);const lines=s.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const typ=lines[0]?.match(/(?:To'ldirish|To'lov)/i)?.[0];if(!typ)return null;const incoming=typ.toLowerCase()==="to'ldirish";const a=lines[1]?.match(/^([+＋➕\-−–➖])\s*([\d., \u00a0\u202f]+)\s*UZS$/i);if(!a||incoming!==['+','＋','➕'].includes(a[1]))return null;const amount=money(a[2]);const c=lines.find(l=>/HUMOCARD\s*\*/i.test(l))?.match(/HUMOCARD\s*\*(\d{4})(?!\d)/i);const t=lines.find(l=>/\d{2}:\d{2}\s+\d{2}\.\d{2}\.\d{4}/.test(l))?.match(/(\d{2}):(\d{2})\s+(\d{2})\.(\d{2})\.(\d{4})/);const b=lines.at(-1)?.match(/([\d., \u00a0\u202f]+)\s*UZS$/i);const bal=b?money(b[1]):null;if(!amount||!c||c[1]!==card||!t||bal===null)return null;const iso=`${t[5]}-${t[4]}-${t[3]}T${t[1]}:${t[2]}:00+05:00`;const ts=Date.parse(iso);if(!Number.isFinite(ts)||new Date(ts+5*3600000).toISOString().slice(0,16)!==iso.slice(0,16))return null;const merchant=lines.find(l=>l.startsWith('📍'))?.replace(/^📍\s*/,'')||'';return {amount:incoming?amount:-amount,balance:bal,card:c[1],ts,merchant};}
++export function parseHumo(raw,card){if(typeof raw!=='string')return null;const s=norm(raw);const lines=s.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const typ=lines[0]?.match(/(?:To'ldirish|To'lov)/i)?.[0];if(!typ)return null;const incoming=typ.toLowerCase()==="to'ldirish";const a=lines[1]?.match(/^([+＋➕\-−–➖])\s*([\d., \u00a0\u202f]+)\s*UZS$/i);if(!a||incoming!==['+','＋','➕'].includes(a[1]))return null;const amount=money(a[2]);const c=lines.find(l=>/HUMOCARD\s*\*/i.test(l))?.match(/HUMOCARD\s*\*(\d{4})(?!\d)/i);const t=lines.find(l=>/\d{2}:\d{2}\s+\d{2}\.\d{2}\.\d{4}/.test(l))?.match(/(\d{2}):(\d{2})\s+(\d{2})\.(\d{2})\.(\d{4})/);const b=lines.slice(2).map(l=>l.match(/^(?:💰\s*|(?:balans|баланс|qoldiq)\s*[:：]\s*)?([\d., \u00a0\u202f]+)\s*UZS$/iu)).filter(Boolean).at(-1);const bal=b?money(b[1]):null;if(!amount||!c||c[1]!==card||!t||bal===null)return null;const iso=`${t[5]}-${t[4]}-${t[3]}T${t[1]}:${t[2]}:00+05:00`;const ts=Date.parse(iso);if(!Number.isFinite(ts)||new Date(ts+5*3600000).toISOString().slice(0,16)!==iso.slice(0,16))return null;const merchant=lines.find(l=>l.startsWith('📍'))?.replace(/^📍\s*/,'')||'';return {amount:incoming?amount:-amount,balance:bal,card:c[1],ts,merchant};}
+ export function summarize(rows){let pool=0,pending=0,pendingNet=0,income=0,expense=0;const taken=[0,0,0];for(const r of rows){if(r.kind==='pending'){pending++;pendingNet+=r.amount;continue;}if(r.kind==='profit'){income+=r.amount;pool+=r.amount;}else if(r.kind==='expense'){expense-=r.amount;pool+=r.amount;}else if(names.includes(r.kind)){taken[names.indexOf(r.kind)]-=r.amount;}}const q=Math.floor(pool/3),rem=pool-q*3;return {pool,pending,pendingNet,income,expense,taken,due:taken.map((v,i)=>q+(i<rem?1:0)-v)};}
+@@ -38,6 +38,8 @@
+   if (!last) return heading('💳 Balans') + '\n' + small('HUMO xabari kutilmoqda');
+-  const base = Math.floor(last.balance / names.length);
+-  const remainder = last.balance - base * names.length;
++  const taken = summarize(rs).taken;
++  const beforeWithdrawals = last.balance + taken.reduce((a,b)=>a+b,0);
++  const base = Math.floor(beforeWithdrawals / names.length);
++  const remainder = beforeWithdrawals - base * names.length;
+   const lines = [line('💳 Balans', fmt(last.balance))];
+-  names.forEach((name, i) => lines.push(line(name, fmt(base + Number(i < remainder)))));
++  names.forEach((name, i) => lines.push(line(name, fmt(base + Number(i < remainder) - taken[i]))));
+   const stamp = date(last.ts);
+@@ -60,3 +62,3 @@
+   ...(r.note ? [line('Izoh', r.note)] : []),
+-  r.kind === 'pending' ? '🕓 Tekshiruvda' : '✓ ' + bold(label(r.kind))
++  r.kind === 'pending' ? '🕓 Tekshiruvda' : '✓ ' + bold(operationLabel(r))
+ ].join('\n');}
+@@ -65,4 +67,55 @@
+ function source(e,u){return u?.is_bot===true&&String(u.id)===String(e.FINANCE_HUMO_BOT_ID);}
+-async function ingest(e,m){const p=parseHumo(m.text,e.FINANCE_CARD_LAST4);if(!p||p.ts<Date.parse(e.FINANCE_TRACK_FROM)||p.ts>Date.now()+300000)return false;const key=JSON.stringify([p.card,p.ts,p.amount,p.balance,p.merchant]);await stmt(e,'INSERT OR IGNORE INTO fin_ops(event_key,ts,amount,balance,kind) VALUES(?,?,?,?,?)',key,p.ts,p.amount,p.balance,'pending').run();const r=await stmt(e,'SELECT * FROM fin_ops WHERE event_key=?',key).first();await postEvent(e,r);await refresh(e);return true;}
+-async function viewContent(e,view,page){let text,markup=back;if(view==='home'){text=await currentDashboard(e);markup=keyboard;}else if(view==='shares'){text=await currentDashboard(e);}else if(view==='month'){const now=monthKey(Date.now());const rs=(await rows(e)).filter(r=>monthKey(r.ts)===now);const s=summarize(rs);text=[heading('OYLIK HISOBOT'),small(now+' · Toshkent'),'',line('Jami kirim',fmt(rs.reduce((a,r)=>a+Math.max(0,r.amount),0))),line('Jami chiqim',fmt(rs.reduce((a,r)=>a+Math.max(0,-r.amount),0))),line('Sof foyda',fmt(s.income)),line('Umumiy xarajat',fmt(s.expense)),line('Sof natija',fmt(s.pool)),'',heading('Olingan mablag‘'),...names.map((n,i)=>line(n,fmt(s.taken[i]))),'',line('Tekshiruvda',s.pending+' ta'),small('Oy yakunida ulushlar nollanmaydi.')].join('\n');}else{const w={in:'WHERE amount>0',out:'WHERE amount<0',pending:"WHERE kind='pending'",all:''}[view];const rs=(await stmt(e,`SELECT * FROM fin_ops ${w} ORDER BY ts DESC,id DESC LIMIT 9 OFFSET ?`,page*8).all()).results;const headings={in:'KIRIMLAR',out:'CHIQIMLAR',pending:'TEKSHIRUV',all:'BARCHA AMALLAR'};const totals=view==='out'?await rows(e,'WHERE amount<0'):view==='in'?await rows(e,'WHERE amount>0'):null;const summary=totals?summarize(totals):null;text=[heading(headings[view]),...(totals?[line(view==='out'?'Jami chiqim':'Jami kirim',fmt(totals.reduce((a,r)=>a+Math.abs(r.amount),0))),...(view==='out'?[line('Umumiy xarajat',fmt(summary.expense)),line('Hamkorlar yechimi',fmt(summary.taken.reduce((a,b)=>a+b,0)))]:[])]:[]),small((page+1)+'-sahifa'),'',...(rs.length?rs.slice(0,8).flatMap(r=>[`${r.amount>0?'↙':'↗'}  ${bold(signed(r.amount))} · #${esc(r.id)}`,small(date(r.ts)+' · '+label(r.kind)),'']):['Amallar yo‘q.'])].join('\n');const nav=[];if(page>0)nav.push(btn('‹ Oldingi',`fin:${view}:${page-1}`));if(rs.length>8)nav.push(btn('Keyingi ›',`fin:${view}:${page+1}`));markup={inline_keyboard:[...(nav.length?[nav]:[]),back.inline_keyboard[0]]};}return {text,markup};}
++const partnerNames=new Map([
++  ['arslan','ARSLAN'],['арслан','ARSLAN'],
++  ['behruz','BEXA'],['bexruz','BEXA'],['bekhruz','BEXA'],['бехруз','BEXA'],['беҳруз','BEXA'],['bexa','BEXA'],
++  ['asad','ASAD'],['асад','ASAD']
++]);
++function identifyName(value, exact=false){
++  const normalized=value.trim().normalize('NFKC').toLowerCase();
++  if(exact) return partnerNames.get(normalized)||null;
++  const words=normalized.split(/\s+/u);
++  if(words.length>4||!words.every(w=>/^[\p{L}][\p{L}.'’*-]*$/u.test(w)))return null;
++  if(words.some(w=>['market','shop','mchj','ooo','магазин','банк','bank','payme','llc'].includes(w)))return null;
++  const found=words.map(w=>partnerNames.get(w)).filter(Boolean);
++  return found.length===1?found[0]:null;
++}
++export function destinationPartner(raw,merchant=''){
++  // Only use a bank recipient field or the destination segment of a P2P descriptor.
++  const fields=[...norm(raw).matchAll(/^[^\p{L}\p{N}\r\n]*(?:получатель(?: перевода)?|кому|recipient|beneficiary|qabul qiluvchi|oluvchi)\s*[:：]\s*([^\r\n]+)$/gimu)];
++  if(fields.length) {
++    const recipients=fields.map(m=>identifyName(m[1]));
++    return recipients[0] && recipients.every(v=>v===recipients[0])?recipients[0]:null;
++  }
++  const transfer=merchant.match(/\b(?:P2P|H2U|U2H|H2H|CARD2CARD)\b[^>\n]*>\s*([^>\n]+)$/iu);
++  return identifyName(transfer?transfer[1]:merchant,true);
++}
++function operationLabel(r){
++  return r.kind==='ignore' && r.actor==='humo:credit' ? 'Kirim tasdiqlandi' : label(r.kind);
++}
++async function autoConfirm(e,r,raw=''){
++  if(r.kind!=='pending')return r;
++  let merchant='';try{merchant=JSON.parse(r.event_key)[4]||'';}catch{}
++  const kind=r.amount>0?'profit':destinationPartner(raw,merchant);
++  if(!kind)return r;
++  const actor=r.amount>0?'humo:credit':'humo:recipient';
++  await stmt(e,"UPDATE fin_ops SET kind=?,actor=?,classified_at=? WHERE id=? AND kind='pending'",kind,actor,Date.now(),r.id).run();
++  return stmt(e,'SELECT * FROM fin_ops WHERE id=?',r.id).first();
++}
++// Resume interrupted edits after deploy without reclassifying a manual decision.
++async function updateExisting(e){
++  const key='auto_review_cursor';
++  const cursor=(await stmt(e,'SELECT v FROM fin_config WHERE k=?',key).first())?.v;
++  if(cursor==='done')return true;
++  const batch=(await stmt(e,"SELECT * FROM fin_ops WHERE id>? AND (kind='pending' OR actor IN ('humo:credit','humo:recipient')) ORDER BY id LIMIT 8",Number(cursor||0)).all()).results;
++  const save=value=>stmt(e,'INSERT OR REPLACE INTO fin_config(k,v) VALUES(?,?)',key,String(value)).run();
++  for(const r of batch){
++    const updated=await autoConfirm(e,r);
++    if(updated.actor?.startsWith('humo:'))await postEvent(e,updated);
++    await save(r.id);
++  }
++  if(batch.length<8){await save('done');return true;}
++  return false;
++}
++async function ingest(e,m){const p=parseHumo(m.text,e.FINANCE_CARD_LAST4);if(!p||p.ts<Date.parse(e.FINANCE_TRACK_FROM)||p.ts>Date.now()+300000)return false;const key=JSON.stringify([p.card,p.ts,p.amount,p.balance,p.merchant]);await stmt(e,'INSERT OR IGNORE INTO fin_ops(event_key,ts,amount,balance,kind) VALUES(?,?,?,?,?)',key,p.ts,p.amount,p.balance,'pending').run();const r=await stmt(e,'SELECT * FROM fin_ops WHERE event_key=?',key).first();await postEvent(e,await autoConfirm(e,r,m.text));await refresh(e);return true;}
++async function viewContent(e,view,page){let text,markup=back;if(view==='home'){text=await currentDashboard(e);markup=keyboard;}else if(view==='shares'){text=await currentDashboard(e);}else if(view==='month'){const now=monthKey(Date.now());const rs=(await rows(e)).filter(r=>monthKey(r.ts)===now);const s=summarize(rs);text=[heading('OYLIK HISOBOT'),small(now+' · Toshkent'),'',line('Jami kirim',fmt(rs.reduce((a,r)=>a+Math.max(0,r.amount),0))),line('Jami chiqim',fmt(rs.reduce((a,r)=>a+Math.max(0,-r.amount),0))),line('Sof foyda',fmt(s.income)),line('Umumiy xarajat',fmt(s.expense)),line('Sof natija',fmt(s.pool)),'',heading('Olingan mablag‘'),...names.map((n,i)=>line(n,fmt(s.taken[i]))),'',line('Tekshiruvda',s.pending+' ta'),small('Oy yakunida ulushlar nollanmaydi.')].join('\n');}else{const w={in:'WHERE amount>0',out:'WHERE amount<0',pending:"WHERE kind='pending'",all:''}[view];const rs=(await stmt(e,`SELECT * FROM fin_ops ${w} ORDER BY ts DESC,id DESC LIMIT 9 OFFSET ?`,page*8).all()).results;const headings={in:'KIRIMLAR',out:'CHIQIMLAR',pending:'TEKSHIRUV',all:'BARCHA AMALLAR'};const totals=view==='out'?await rows(e,'WHERE amount<0'):view==='in'?await rows(e,'WHERE amount>0'):null;const summary=totals?summarize(totals):null;text=[heading(headings[view]),...(totals?[line(view==='out'?'Jami chiqim':'Jami kirim',fmt(totals.reduce((a,r)=>a+Math.abs(r.amount),0))),...(view==='out'?[line('Umumiy xarajat',fmt(summary.expense)),line('Hamkorlar yechimi',fmt(summary.taken.reduce((a,b)=>a+b,0)))]:[])]:[]),small((page+1)+'-sahifa'),'',...(rs.length?rs.slice(0,8).flatMap(r=>[`${r.amount>0?'↙':'↗'}  ${bold(signed(r.amount))} · #${esc(r.id)}`,small(date(r.ts)+' · '+operationLabel(r)),'']):['Amallar yo‘q.'])].join('\n');const nav=[];if(page>0)nav.push(btn('‹ Oldingi',`fin:${view}:${page-1}`));if(rs.length>8)nav.push(btn('Keyingi ›',`fin:${view}:${page+1}`));markup={inline_keyboard:[...(nav.length?[nav]:[]),back.inline_keyboard[0]]};}return {text,markup};}
+ async function show(e,q,view,page){const id=await dashboardId(e);if(!id||String(q.message.message_id)!==String(id)){await answer(e,q,'Moliya panelidan foydalaning.');return;}if(view==='home')await ensureChannelUpdates(e);const {text,markup}=await viewContent(e,view,page);await edit(e,id,text,markup);await answer(e,q,'Yangilandi.');}
+@@ -165,5 +218,6 @@
+   await setupGroupMenu(e);
+-  const layout='photo-v1:'+e.FINANCE_CHANNEL_ID;
++  const migrated=await updateExisting(e);
++  const layout='partner-v1:'+e.FINANCE_CHANNEL_ID;
+   const stored=await stmt(e,"SELECT v FROM fin_config WHERE k='balance_layout'").first();
+-  if (stored?.v !== layout && await dashboardId(e)) {
++  if (migrated && stored?.v !== layout && await dashboardId(e)) {
+     await refresh(e);
+--- a/test.mjs
++++ b/test.mjs
+@@ -17,3 +17,3 @@
+ import {handleFinanceRelay} from './finance.mjs';
+-test('compact dashboard keeps shares and moves detailed expenses to commands',()=>{const t=dashboardText([{amount:30000,balance:30000,kind:'profit',ts:0},{amount:-6000,balance:24000,kind:'expense',ts:1},{amount:-1000,balance:23000,kind:'ARSLAN',ts:2},{amount:-2000,balance:21000,kind:'pending',ts:3}]);assert.doesNotMatch(t,/Jami chiqim|Umumiy xarajat|Hamkorlar yechimi/);assert.doesNotMatch(t,/\/moliya/);assert.match(t,/ASAD · <b>70 so‘m/);});
++test('compact dashboard keeps shares and moves detailed expenses to commands',()=>{const t=dashboardText([{amount:30000,balance:30000,kind:'profit',ts:0},{amount:-6000,balance:24000,kind:'expense',ts:1},{amount:-1000,balance:23000,kind:'ARSLAN',ts:2},{amount:-2000,balance:21000,kind:'pending',ts:3}]);assert.doesNotMatch(t,/Jami chiqim|Umumiy xarajat|Hamkorlar yechimi/);assert.doesNotMatch(t,/\/moliya/);assert.match(t,/ASAD · <b>73,33 so‘m/);});
+ test('finance relay rejects unauthorized requests before database access',async()=>{const e={P2P_HUMO_SECRET:'x'.repeat(40),get FINANCE_DB(){throw Error('must not access');}};assert.equal((await handleFinanceRelay(new Request('https://example.test/finance/relay',{method:'POST'}),e)).status,403);});
+@@ -55 +55,28 @@
+ }
++
++import {destinationPartner} from './finance.mjs';
++test('a recipient must be a named destination, never a sender, city or merchant-name substring',()=>{
++  assert.equal(destinationPartner('Получатель: Бехруз А.'),'BEXA');
++  assert.equal(destinationPartner('Oluvchi: ARSLAN'),'ARSLAN');
++  assert.equal(destinationPartner('','PAYME P2P H2U>ASAD'),'ASAD');
++  for(const [text,merchant] of [['Отправитель: Асад','PAYME P2P H2U>TASHKE'],['Кому: АСАДБЕК',''],['Кому: ARSLAN ASAD',''],['','ASAD MARKET'],['Кому: ASAD\nКому: BEXA','']])
++    assert.equal(destinationPartner(text,merchant),null);
++});
++test('personal withdrawal only reduces the named share, including a replay',async()=>{
++ const {d,db}=d1test(),orig=globalThis.fetch;
++ globalThis.fetch=async(url)=>({json:async()=>({ok:true,result:String(url).endsWith('/getChat')?{type:'supergroup'}:{message_id:77}})});
++ try{
++  const secret='x'.repeat(40),e={FINANCE_DB:db,ADMIN_ID:'111',BOT_TOKEN:'test',P2P_HUMO_SECRET:secret};
++  for(const [k,v] of Object.entries({channel:'-1001234567890',card:'1234',track_from:'2026-01-01T00:00:00Z',humo_peer:'333',dashboard:'50'}))d.prepare('INSERT INTO fin_config VALUES(?,?)').run(k,v);
++  const msg="💸 To'lov\n− 300,00 UZS\n📍 PAYME P2P H2U>TASHKE\nOluvchi: Bexruz\n💳 HUMOCARD *1234\n🕒 19:10 15.11.2026\n💰 2.700,00 UZS";
++  const send=(id,text)=>handleFinanceRelay(new Request('https://example.test/finance/relay',{method:'POST',headers:{Authorization:'Bearer '+secret},body:JSON.stringify({eventId:'tg:333:'+id,text})}),e);
++  for(let n=0;n<2;n++)assert.equal((await (await send(1,msg)).json()).accepted,true);
++  const rs=d.prepare('SELECT * FROM fin_ops').all();
++  assert.equal(rs.length,1);assert.equal(rs[0].kind,'BEXA');assert.equal(d.prepare('SELECT COUNT(*) n FROM fin_audit').get().n,1);
++  const dashboard=dashboardText(rs);assert.match(dashboard,/BEXA · <b>700 so‘m/);assert.match(dashboard,/ASAD · <b>1 000 so‘m/);
++  const credit=msg.replace("💸 To'lov","🎉 To'ldirish").replace('− 300','+ 300').replace('2.700','3.000');
++  assert.equal((await (await send(2,credit)).json()).accepted,true);
++  const incoming=d.prepare('SELECT * FROM fin_ops WHERE amount>0').get();
++  assert.equal(incoming.actor,'humo:credit');assert.equal(eventKeyboard(incoming).inline_keyboard.length,0);assert.equal(summarize([incoming]).income,30000);
++ } finally {globalThis.fetch=orig;d.close();}
++});
